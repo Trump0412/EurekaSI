@@ -1,0 +1,80 @@
+--- a/geopsro4d/reward/answer_parser.py
++++ b/geopsro4d/reward/answer_parser.py
+@@ -18,17 +18,22 @@
+ 
+ def parse_answer(text: str, choices: list[str] | tuple[str, ...] | None = None) -> str | None:
+     text = unicodedata.normalize("NFKC", text)
+-    answer_sections = re.findall(r"(?is)answer\s*[:：]\s*(.*)", text)
+-    target = answer_sections[-1].strip() if answer_sections else text.strip()
++    sections = re.findall(r"<answer>\s*(.*?)\s*</answer>", text, re.I | re.S)
++    if len(sections) > 1:
++        return None
++    if sections:
++        target = sections[0].strip()
++    else:
++        text = re.sub(r"<think>.*?</think>", "", text, flags=re.I | re.S)
++        if re.search(r"</?(?:think|answer)>", text, re.I):
++            return None
++        answers = re.findall(r"(?:^|\n)(?:final\s+)?answer\s*[:：]\s*(.+)", text, re.I)
++        target = answers[-1].strip() if answers else text.strip()
+     if choices:
+-        matches = [m.group(1).upper() for m in OPTION_RE.finditer(target.upper())]
+         labels = {chr(ord("A") + i) for i in range(len(choices))}
+-        matches = [m for m in matches if m in labels]
+-        if len(set(matches)) == 1:
+-            return matches[-1]
+-        if len(set(matches)) > 1:
+-            return None
+-        first = target.strip()[:1].upper()
+-        return first if first in labels else None
+-    target = re.split(r"[\n\r]", target)[0].strip()
++        match = re.fullmatch(r"\(?([A-Z])\)?[.。]?", target.upper())
++        if match and match.group(1) in labels:
++            return match.group(1)
++        exact = [chr(65+i) for i,v in enumerate(choices) if normalize_answer(str(v)) == normalize_answer(target)]
++        return exact[0] if len(exact) == 1 else None
+     return normalize_answer(target) if target else None
+--- a/geopsro4d/data/schema.py
++++ b/geopsro4d/data/schema.py
+@@ -16,8 +16,15 @@
+     metadata: dict[str, Any] = field(default_factory=dict)
+ 
+ 
++def _first_present(row, keys, default=""):
++    for key in keys:
++        if key in row and row[key] is not None and row[key] != "":
++            return row[key]
++    return default
++
++
+ def normalize_sample(row: dict[str, Any], *, default_dataset: str = "unknown") -> GeoSample:
+-    sample_id = str(row.get("sample_id") or row.get("id") or row.get("clip_id") or row.get("qid") or "")
++    sample_id = str(_first_present(row, ["sample_id", "id", "clip_id", "qid"]))
+     if not sample_id:
+         raise ValueError("sample requires sample_id/id/clip_id/qid")
+     media_paths = row.get("media_paths") or row.get("frame_paths") or row.get("images") or row.get("video") or []
+@@ -26,7 +33,7 @@
+     if not media_paths:
+         raise ValueError(f"sample {sample_id} has no media_paths")
+     question = str(row.get("question") or row.get("prompt") or "")
+-    answer = str(row.get("answer") or row.get("target") or row.get("label") or "")
++    answer = str(_first_present(row, ["answer", "target", "label"]))
+     if not question or not answer:
+         raise ValueError(f"sample {sample_id} requires question and answer")
+     choices = row.get("choices")
+--- a/geopsro4d/eval/eval_dsr.py
++++ b/geopsro4d/eval/eval_dsr.py
+@@ -14,9 +14,11 @@
+     for row in iter_jsonl(predictions):
+         response = str(row.get("raw_response") or row.get("response") or row.get("prediction") or "")
+         choices = row.get("choices")
+-        gold = row.get("answer") or row.get("gold_answer")
++        gold = row.get("answer") if row.get("answer") is not None else row.get("gold_answer")
++        if gold is None or not str(gold).strip():
++            raise ValueError(f"Missing gold answer for sample {row.get('sample_id', row.get('id'))}")
+         pred = parse_answer(response, choices)
+-        correct = normalize_answer(pred) == normalize_answer(gold)
++        correct = pred is not None and normalize_answer(pred) == normalize_answer(gold)
+         parsed = parse_psro(response)
+         out = {
+             "sample_id": row.get("sample_id") or row.get("id"),

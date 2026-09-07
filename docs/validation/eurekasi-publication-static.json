@@ -1,0 +1,42 @@
+{
+  "date": "2026-09-07",
+  "project": "EurekaSI",
+  "repository": "https://github.com/Trump0412/EurekaSI",
+  "version": "0.2.1",
+  "python": "3.12.7",
+  "checks": [
+    {
+      "command": "python scripts/static_check.py",
+      "exit_code": 0,
+      "result": {
+        "status": "static_checks_passed",
+        "counts": {
+          "python": 49,
+          "json": 8,
+          "jsonl": 1,
+          "yaml": 35,
+          "toml": 1,
+          "local_links": 60
+        },
+        "errors": [],
+        "scope": "parsing/local links only; no application imports, tests, downloads, or model execution"
+      }
+    },
+    {
+      "command": "python scripts/release_check.py",
+      "exit_code": 0,
+      "result": {
+        "status": "release_static_checks_passed",
+        "errors": [],
+        "public_files": 148,
+        "runtime_resources": 31,
+        "version": "0.2.1",
+        "scope": "local source selection and metadata only; no build, install, app imports or tests"
+      }
+    }
+  ],
+  "runtime_validation": "not run",
+  "installation_build_download_training_inference": "not run",
+  "ci": "push and pull requests run static checks; packaging and CPU jobs require workflow_dispatch",
+  "publication": "This record describes pre-commit static validation, not remote push success."
+}

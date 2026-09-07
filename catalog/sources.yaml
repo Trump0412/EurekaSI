@@ -1,0 +1,55 @@
+geothinker:
+  url: https://github.com/Li-Hao-yuan/GeoThinker
+  commit: e9b3786ab5847618b406e41a661e2106f2aa82af
+  status: source_inspected_not_gpu_validated
+geosr:
+  url: https://github.com/SuhZhang/GeoSR
+  commit: cac5017c867f3b06e74c397bf32b1f06c38fab45
+  status: source_inspected_not_gpu_validated
+spatialstack:
+  url: https://github.com/jzh15/SpatialStack
+  commit: b84ebaa5451df42a275077772e7a0a6c66e74453
+  status: source_inspected_not_gpu_validated
+easi:
+  url: https://github.com/EvolvingLMMs-Lab/EASI
+  commit: 0c1a41e55d49837907ddd6380863222506a4be3e
+  status: source_inspected_not_gpu_validated
+  submodules: true
+vggt:
+  url: https://github.com/facebookresearch/vggt
+  commit: a288dd0f14786c93483e45524328726ab7b1b4ce
+  status: source_inspected_not_gpu_validated
+da3:
+  url: https://github.com/ByteDance-Seed/Depth-Anything-3
+  commit: 3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
+  status: source_inspected_not_gpu_validated
+pi3:
+  url: https://github.com/yyfz/Pi3
+  commit: 9fa3ddb3f8d53041f8b2738df404f62223bbaa7b
+  status: source_inspected_not_gpu_validated
+libero:
+  url: https://github.com/Lifelong-Robot-Learning/LIBERO
+  commit: 8f1084e3132a39270c3a13ebe37270a43ece2a01
+  status: source_inspected_not_gpu_validated
+dsr:
+  url: https://github.com/TencentARC/DSR_Suite
+  commit: ae81203a672613bc746fce8299b2be3b9133ede1
+  status: source_inspected_not_gpu_validated
+revsi:
+  url: https://github.com/3dlg-hcvc/revsi
+  commit: fd36516db5b10f6eefb08175b16bc038b648d291
+  status: source_inspected_not_gpu_validated
+geowire:
+  url: https://github.com/Trump0412/GeoWire
+  commit: d427cc7dd849e96682a8153fa6e2d5a30fd348e2
+  patches:
+  - patches/geowire-generation.patch
+geobridge:
+  url: https://github.com/Trump0412/GeoBridge
+  commit: 74cfe79500e59d92af21ab4e7b1a746031a94711
+  patches: []
+geopsro:
+  url: https://github.com/Trump0412/GeoPSRO
+  commit: 4d7db6e3e3dc02e5e9197c731a92bf8bacfc8c36
+  patches:
+  - patches/geopsro-scoring-schema.patch

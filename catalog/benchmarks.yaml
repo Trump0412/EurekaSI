@@ -1,0 +1,64 @@
+vsibench:
+  asset: vsibench
+  engine: easi
+  task: vsi_bench
+  official_protocol: Engine task owns prompt, preprocessing and scoring; report separately
+    from common manifest protocol.
+mmsi:
+  asset: mmsi
+  engine: easi
+  task: mmsi_bench
+  official_protocol: Engine task owns prompt, preprocessing and scoring; report separately
+    from common manifest protocol.
+viewspatial:
+  asset: viewspatial
+  engine: easi
+  task: viewspatial
+  official_protocol: Engine task owns prompt, preprocessing and scoring; report separately
+    from common manifest protocol.
+mindcube:
+  asset: mindcube
+  engine: easi
+  task: mindcube_tiny
+  official_protocol: Engine task owns prompt, preprocessing and scoring; report separately
+    from common manifest protocol.
+  notes: Default external task is MindCube-Tiny, not full MindCube; name this subset
+    in results.
+revsi:
+  asset: revsi
+  engine: lmms
+  task: revsi_32_frame
+  source: revsi
+  notes: Use the prescribed 32-frame view selection. Requires an lmms-eval revision
+    with this task; preflight rejects missing task.
+dsr:
+  asset: dsr
+  engine: vlmeval
+  task: DSRBench_32frame
+  source: dsr
+  notes: Task existence checked in your engine. Original DSR fork instead uses Spatial-Reasoning;
+    keep protocols separate.
+cvbench:
+  engine: lmms
+  task: cvbench
+  notes: Use lmms-eval with its cvbench task; not an EASI CLI key.
+blink:
+  engine: easi
+  task: blink
+  notes: External engine dataset download/terms apply.
+embspatial:
+  engine: easi
+  task: embspatial
+  notes: External engine dataset download/terms apply.
+3dsrbench:
+  engine: easi
+  task: 3dsrbench
+  notes: External engine dataset download/terms apply.
+site-image:
+  engine: easi
+  task: site_image
+  notes: External engine dataset download/terms apply.
+site-video:
+  engine: easi
+  task: site_video
+  notes: External engine dataset download/terms apply.

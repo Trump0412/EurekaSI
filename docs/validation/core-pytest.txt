@@ -1,0 +1,9 @@
+.......................................................                  [100%]
+=============================== warnings summary ===============================
+tests/test_hf_training.py::test_lora_training_checkpoint_reload
+  <historical-workspace>/verify-final/lib/python3.12/site-packages/peft/tuners/lora/layer.py:2174: UserWarning: fan_in_fan_out is set to False but the target module is `Conv1D`. Setting fan_in_fan_out to True.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: <historical-workspace>/spatial-intelligence/docs/validation/core-junit.xml -
+55 passed, 3 deselected, 1 warning in 3.84s

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eurekasi"
+version = "0.2.1"
+description = "EurekaSI: shared spatial intelligence infrastructure for research and applications"
+readme = "README.md"
+keywords = ["spatial-intelligence", "multimodal", "geometry", "evaluation"]
+requires-python = ">=3.10,<3.13"
+dependencies = ["PyYAML==6.0.3", "Pillow==11.3.0", "huggingface-hub==0.36.2", "numpy==1.26.4", "tomli>=2,<3; python_version < '3.11'"]
+
+[project.urls]
+Repository = "https://github.com/Trump0412/EurekaSI"
+Issues = "https://github.com/Trump0412/EurekaSI/issues"
+
+[project.optional-dependencies]
+train = ["torch==2.5.1", "torchvision==0.20.1", "transformers==4.57.6", "accelerate==1.4.0", "peft==0.17.1", "safetensors==0.7.0", "einops==0.8.1"]
+video = ["opencv-python-headless==4.11.0.86"]
+data = ["opencv-python-headless==4.11.0.86", "datasets==3.6.0", "pandas==2.2.3"]
+test = ["pytest==8.3.5", "torch==2.5.1", "torchvision==0.20.1", "transformers==4.57.6", "accelerate==1.4.0", "peft==0.17.1", "safetensors==0.7.0", "einops==0.8.1", "pandas==2.2.3", "datasets==3.6.0", "loguru==0.7.3", "opencv-python-headless==4.11.0.86"]
+vsi = ["pandas==2.2.3", "datasets==3.6.0", "loguru==0.7.3"]
+
+[project.scripts]
+eurekasi = "spatial_intelligence.cli:main"
+spatial = "spatial_intelligence.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["spatial_intelligence*"]
+
+[tool.setuptools.package-data]
+"spatial_intelligence.vendor.vsi" = ["*.yaml", "LICENSE"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-markers"]
+testpaths = ["tests"]
+markers = ["distributed: requires local process-group socket communication"]
+
+[tool.setuptools.data-files]
+"share/spatial-intelligence" = ["sources.lock.json"]
+"share/spatial-intelligence/catalog" = ["catalog/*.yaml"]
+"share/spatial-intelligence/configs" = ["configs/*.yaml"]
+"share/spatial-intelligence/configs/geometry" = ["configs/geometry/*.yaml"]
+"share/spatial-intelligence/configs/suites" = ["configs/suites/*.yaml"]
+"share/spatial-intelligence/patches" = ["patches/*.patch"]

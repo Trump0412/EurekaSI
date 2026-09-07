@@ -1,0 +1,320 @@
+qwen3-vl-2b:
+  repo_id: Qwen/Qwen3-VL-2B-Instruct
+  repo_type: model
+  revision: 89644892e4d85e24eaac8bacfd4f463576704203
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct
+  verified_revision: 89644892e4d85e24eaac8bacfd4f463576704203
+  metadata_check: passed
+qwen3-vl-4b:
+  repo_id: Qwen/Qwen3-VL-4B-Instruct
+  repo_type: model
+  revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
+  verified_revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
+  metadata_check: passed
+qwen3-vl-8b:
+  repo_id: Qwen/Qwen3-VL-8B-Instruct
+  repo_type: model
+  revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+  verified_revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+  metadata_check: passed
+qwen25-vl-3b:
+  repo_id: Qwen/Qwen2.5-VL-3B-Instruct
+  repo_type: model
+  revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+  verified_revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+  metadata_check: passed
+qwen25-vl-7b:
+  repo_id: Qwen/Qwen2.5-VL-7B-Instruct
+  repo_type: model
+  revision: cc594898137f460bfe9f0759e9844b3ce807cfb5
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
+  verified_revision: cc594898137f460bfe9f0759e9844b3ce807cfb5
+  metadata_check: passed
+qwen2-vl-2b:
+  repo_id: Qwen/Qwen2-VL-2B-Instruct
+  repo_type: model
+  revision: 895c3a49bc3fa70a340399125c650a463535e71c
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct
+  verified_revision: 895c3a49bc3fa70a340399125c650a463535e71c
+  metadata_check: passed
+internvl3-8b-hf:
+  repo_id: OpenGVLab/InternVL3-8B-hf
+  repo_type: model
+  revision: 259a3b64a14623c0ec91a045cb43f7c5af5fa6af
+  integration: hf_native
+  validation: not_weight_loaded
+  url: https://huggingface.co/OpenGVLab/InternVL3-8B-hf
+  verified_revision: 259a3b64a14623c0ec91a045cb43f7c5af5fa6af
+  metadata_check: passed
+llava-onevision-7b-hf:
+  repo_id: llava-hf/llava-onevision-qwen2-7b-ov-hf
+  repo_type: model
+  revision: 0d50680527681998e456c7b78950205bedd8a068
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/llava-hf/llava-onevision-qwen2-7b-ov-hf
+  notes: 'External only: native backend currently rejects llava_onevision model_type.'
+  verified_revision: 0d50680527681998e456c7b78950205bedd8a068
+  metadata_check: passed
+vggt:
+  repo_id: facebook/VGGT-1B
+  repo_type: model
+  revision: 860abec7937da0a4c03c41d3c269c366e82abdf9
+  integration: geometry_extractor
+  validation: not_weight_loaded
+  url: https://huggingface.co/facebook/VGGT-1B
+  verified_revision: 860abec7937da0a4c03c41d3c269c366e82abdf9
+  metadata_check: passed
+da3:
+  repo_id: depth-anything/DA3NESTED-GIANT-LARGE
+  repo_type: model
+  revision: 8615eefb62f2db4f8d6ebaa59160086981672829
+  integration: geometry_extractor
+  validation: not_weight_loaded
+  url: https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE
+  verified_revision: 8615eefb62f2db4f8d6ebaa59160086981672829
+  metadata_check: passed
+pi3:
+  repo_id: yyfz233/Pi3
+  repo_type: model
+  revision: ae722e7039287d0c8fde9f11f197f804f44b510c
+  integration: geometry_extractor
+  validation: not_weight_loaded
+  url: https://huggingface.co/yyfz233/Pi3
+  verified_revision: ae722e7039287d0c8fde9f11f197f804f44b510c
+  metadata_check: passed
+geothinker:
+  repo_id: lihy285/GeoThinker
+  repo_type: model
+  revision: 7ba854d3d9892cff3fbf278c05d661707028b53e
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/lihy285/GeoThinker
+  allow_patterns:
+  - GeoThinker-VGGT-Scaled-Qwen3VL-8B/*
+  verified_revision: 7ba854d3d9892cff3fbf278c05d661707028b53e
+  metadata_check: passed
+geosr:
+  repo_id: SuhZhang/GeoSR-Model
+  repo_type: model
+  revision: 67e6636bbd81518b1c74f9b070c275e7a8da0b92
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/SuhZhang/GeoSR-Model
+  verified_revision: 67e6636bbd81518b1c74f9b070c275e7a8da0b92
+  metadata_check: passed
+spatialstack:
+  repo_id: Journey9ni/SpatialStack-Qwen3.5-4B
+  repo_type: model
+  revision: 777b2289252f7c78628e0f8ac63ffddf50fe7f7b
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/Journey9ni/SpatialStack-Qwen3.5-4B
+  verified_revision: 777b2289252f7c78628e0f8ac63ffddf50fe7f7b
+  metadata_check: passed
+sensenova-si:
+  repo_id: sensenova/SenseNova-SI-1.3-Qwen3-VL-8B
+  repo_type: model
+  revision: a6328154b47faa7dc349a4f56477db00bff1ad1f
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/sensenova/SenseNova-SI-1.3-Qwen3-VL-8B
+  verified_revision: a6328154b47faa7dc349a4f56477db00bff1ad1f
+  metadata_check: passed
+spatialladder:
+  repo_id: hongxingli/SpatialLadder-3B
+  repo_type: model
+  revision: 0819c3adf8827a2ea6c0348d49a23503ecb1f428
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/hongxingli/SpatialLadder-3B
+  verified_revision: 0819c3adf8827a2ea6c0348d49a23503ecb1f428
+  metadata_check: passed
+spatial-mllm:
+  repo_id: Diankun/Spatial-MLLM-subset-sft
+  repo_type: model
+  revision: 7c07e6ab09819c848fc7fbdfdb5c58c30d5c7265
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/Diankun/Spatial-MLLM-subset-sft
+  verified_revision: 7c07e6ab09819c848fc7fbdfdb5c58c30d5c7265
+  metadata_check: passed
+spacer:
+  repo_id: RUBBISHLIKE/SpaceR
+  repo_type: model
+  revision: 669cff6b1cf74fdaff75378d24c5c96459276152
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/RUBBISHLIKE/SpaceR
+  verified_revision: 669cff6b1cf74fdaff75378d24c5c96459276152
+  metadata_check: passed
+vst-3b:
+  repo_id: rayruiyang/VST-3B-SFT
+  repo_type: model
+  revision: b9f90a7b723f8a46f44556fa638c50c562570106
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/rayruiyang/VST-3B-SFT
+  verified_revision: b9f90a7b723f8a46f44556fa638c50c562570106
+  metadata_check: passed
+cambrian-s-3b:
+  repo_id: nyu-visionx/Cambrian-S-3B
+  repo_type: model
+  revision: 9d8cbd75ab3ed53683b171d6fdd888f81f0febd1
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/nyu-visionx/Cambrian-S-3B
+  verified_revision: 9d8cbd75ab3ed53683b171d6fdd888f81f0febd1
+  metadata_check: passed
+mindcube-sft:
+  repo_id: MLL-Lab/MindCube-Qwen2.5VL-RawQA-SFT
+  repo_type: model
+  revision: d5ecb32d91d94b71460994b323f8d5166c2317a8
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/MLL-Lab/MindCube-Qwen2.5VL-RawQA-SFT
+  verified_revision: d5ecb32d91d94b71460994b323f8d5166c2317a8
+  metadata_check: passed
+dsr-model:
+  repo_id: TencentARC/DSR_Suite-Model
+  repo_type: model
+  revision: d0df6d2adced373a4b4caa71015c03596032bcdf
+  integration: external_environment
+  validation: not_weight_loaded
+  url: https://huggingface.co/TencentARC/DSR_Suite-Model
+  verified_revision: d0df6d2adced373a4b4caa71015c03596032bcdf
+  metadata_check: passed
+spar7m:
+  repo_id: jasonzhango/SPAR-7M
+  repo_type: dataset
+  revision: 0fe664cbada1e7c1173fd743e0f781882eebf777
+  url: https://huggingface.co/datasets/jasonzhango/SPAR-7M
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 0fe664cbada1e7c1173fd743e0f781882eebf777
+  metadata_check: passed
+vg-llm-data:
+  repo_id: zd11024/VG-LLM-Data
+  repo_type: dataset
+  revision: 4dc7eb0e9a5b481c3683f2af525f4aa4f08a7b8e
+  url: https://huggingface.co/datasets/zd11024/VG-LLM-Data
+  validation: catalog_only_use_build_data_to_verify_local_media
+  allow_patterns:
+  - train/spar_234k.json
+  - train/llava_hound_64k.json
+  verified_revision: 4dc7eb0e9a5b481c3683f2af525f4aa4f08a7b8e
+  metadata_check: passed
+llava-video:
+  repo_id: lmms-lab/LLaVA-Video-178K
+  repo_type: dataset
+  revision: 6d8c562dc26d70042a0d9704d1cae58c94b89098
+  url: https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 6d8c562dc26d70042a0d9704d1cae58c94b89098
+  metadata_check: passed
+llava-hound-media:
+  repo_id: ShareGPTVideo/train_video_and_instruction
+  repo_type: dataset
+  revision: 7ed0b5422bfdcfb385cd394d69675b81eb14261c
+  url: https://huggingface.co/datasets/ShareGPTVideo/train_video_and_instruction
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 7ed0b5422bfdcfb385cd394d69675b81eb14261c
+  metadata_check: passed
+vsibench:
+  repo_id: nyu-visionx/VSI-Bench
+  repo_type: dataset
+  revision: bdcadb3fea447621a828a24911801faba3587c12
+  url: https://huggingface.co/datasets/nyu-visionx/VSI-Bench
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: bdcadb3fea447621a828a24911801faba3587c12
+  metadata_check: passed
+revsi:
+  repo_id: 3dlg-hcvc/ReVSI
+  repo_type: dataset
+  revision: e80b1cde454ab7e2783eff96277038e29e2b2dca
+  url: https://huggingface.co/datasets/3dlg-hcvc/ReVSI
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: e80b1cde454ab7e2783eff96277038e29e2b2dca
+  metadata_check: passed
+mmsi:
+  repo_id: RunsenXu/MMSI-Bench
+  repo_type: dataset
+  revision: ec7c92bfaf7728fcca1d61e3e224e190af309436
+  url: https://huggingface.co/datasets/RunsenXu/MMSI-Bench
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: ec7c92bfaf7728fcca1d61e3e224e190af309436
+  metadata_check: passed
+viewspatial:
+  repo_id: lidingm/ViewSpatial-Bench
+  repo_type: dataset
+  revision: 95d9ea3a94da7190bd19d2539ff661f93dba21dd
+  url: https://huggingface.co/datasets/lidingm/ViewSpatial-Bench
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 95d9ea3a94da7190bd19d2539ff661f93dba21dd
+  metadata_check: passed
+mindcube:
+  repo_id: MLL-Lab/MindCube
+  repo_type: dataset
+  revision: 9c941b46a6bd65b6914669ef7a579948fc9c8467
+  url: https://huggingface.co/datasets/MLL-Lab/MindCube
+  validation: catalog_only_use_build_data_to_verify_local_media
+  notes: Dataset repository includes images; fetch separate released QA annotations
+    from MindCube project. Images alone are not QA.
+  verified_revision: 9c941b46a6bd65b6914669ef7a579948fc9c8467
+  metadata_check: passed
+dsr:
+  repo_id: TencentARC/DSR_Suite-Data
+  repo_type: dataset
+  revision: 414132f02d03cecc583cc6ae77c9cfdc661f87a7
+  url: https://huggingface.co/datasets/TencentARC/DSR_Suite-Data
+  validation: catalog_only_use_build_data_to_verify_local_media
+  notes: benchmark.parquet is test QA; train_qa_pairs.* is training. Referenced Koala/Panda
+    media may require separate acquisition.
+  verified_revision: 414132f02d03cecc583cc6ae77c9cfdc661f87a7
+  metadata_check: passed
+vlm3r-data:
+  repo_id: Journey9ni/VLM-3R-DATA
+  repo_type: dataset
+  revision: aae3535e513d36be5fd0a1edbaab523c8a3c45e4
+  url: https://huggingface.co/datasets/Journey9ni/VLM-3R-DATA
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: aae3535e513d36be5fd0a1edbaab523c8a3c45e4
+  metadata_check: passed
+vsi590k:
+  repo_id: nyu-visionx/VSI-590K
+  repo_type: dataset
+  revision: 346fbd4e41dec974bf24894d0541a49327ee6669
+  url: https://huggingface.co/datasets/nyu-visionx/VSI-590K
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 346fbd4e41dec974bf24894d0541a49327ee6669
+  metadata_check: passed
+cambrian-s-data:
+  repo_id: nyu-visionx/Cambrian-S-3M
+  repo_type: dataset
+  revision: 4b3baf755096a798f4ad497a9796420ce9efb9dd
+  url: https://huggingface.co/datasets/nyu-visionx/Cambrian-S-3M
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 4b3baf755096a798f4ad497a9796420ce9efb9dd
+  metadata_check: passed
+spatialstack-data:
+  repo_id: Journey9ni/SpatialStackData
+  repo_type: dataset
+  revision: 4f078beb949fc535b40b7c09d841b24f93835c56
+  url: https://huggingface.co/datasets/Journey9ni/SpatialStackData
+  validation: catalog_only_use_build_data_to_verify_local_media
+  verified_revision: 4f078beb949fc535b40b7c09d841b24f93835c56
+  metadata_check: passed

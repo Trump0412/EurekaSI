@@ -1,0 +1,13 @@
+name: geowire
+shared_package: spatial_intelligence
+source: geowire
+focus: 跨帧几何图与视觉 token 传输；验证对应与跨帧持续性。
+shared_modes:
+- sft
+- rl
+- opd
+- opsd
+- offline_kd
+- inference
+original_sft_launcher: configs/legacy-geowire-sft.yaml
+method_status: historical implementation via legacy; common fusion is a separate baseline

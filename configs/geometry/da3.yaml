@@ -1,0 +1,6 @@
+name: da3
+weights: /data/spatial/models/da3
+source_commit: 3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
+device: cuda:0
+grid: 8
+image_size: 504

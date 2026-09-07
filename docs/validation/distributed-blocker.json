@@ -1,0 +1,9 @@
+{
+  "status": "blocked_not_validated",
+  "date": "2026-09-07",
+  "tests": ["test_unused_gradients_collective_order", "test_two_rank_training_matches_single_global_batch", "test_two_rank_inference_exact_coverage"],
+  "failure_stage": "torch.distributed.init_process_group(gloo)",
+  "error": "RuntimeError: gloo/transport/tcp/device.cc: Operation not permitted",
+  "attempts": ["default interface", "GLOO_SOCKET_IFNAME=lo"],
+  "note": "Assertions were not reached. Full tests remain required by CI. CUDA/NCCL not available."
+}

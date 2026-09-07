@@ -1,0 +1,80 @@
+--- a/geowire/geowire/models/qwen3vl_bridge.py
++++ b/geowire/geowire/models/qwen3vl_bridge.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import inspect
++from contextlib import contextmanager
+ from dataclasses import dataclass
+ from types import MethodType
+ from typing import Any, Callable
+@@ -74,17 +75,8 @@
+     def get_input_embeddings(self):
+         return self.base_model.get_input_embeddings()
+ 
+-    def forward(
+-        self,
+-        *args,
+-        graph: SparseGraph,
+-        input_ids: torch.LongTensor | None = None,
+-        attention_mask: torch.Tensor | None = None,
+-        pixel_values: torch.Tensor | None = None,
+-        image_grid_thw: torch.LongTensor | None = None,
+-        labels: torch.LongTensor | None = None,
+-        **kwargs: Any,
+-    ):
++    @contextmanager
++    def _transport_context(self, graph):
+         original = self.base_model.model.get_image_features
+ 
+         def patched_get_image_features(_model_self, pixel_values_arg, image_grid_thw_arg=None):
+@@ -100,27 +92,30 @@
+ 
+         self.base_model.model.get_image_features = MethodType(patched_get_image_features, self.base_model.model)
+         try:
+-            return self.base_model(
+-                *args,
+-                input_ids=input_ids,
+-                attention_mask=attention_mask,
+-                pixel_values=pixel_values,
+-                image_grid_thw=image_grid_thw,
+-                labels=labels,
+-                **kwargs,
+-            )
++            yield
+         finally:
+             self.base_model.model.get_image_features = original
+ 
++    def forward(
++        self,
++        *args,
++        graph: SparseGraph,
++        input_ids: torch.LongTensor | None = None,
++        attention_mask: torch.Tensor | None = None,
++        pixel_values: torch.Tensor | None = None,
++        image_grid_thw: torch.LongTensor | None = None,
++        labels: torch.LongTensor | None = None,
++        **kwargs: Any,
++    ):
++        with self._transport_context(graph):
++            return self.base_model(
++                *args, input_ids=input_ids, attention_mask=attention_mask,
++                pixel_values=pixel_values, image_grid_thw=image_grid_thw,
++                labels=labels, **kwargs,
++            )
++
+     def generate(self, *args, graph: SparseGraph, **kwargs):
+-        original_forward: Callable[..., Any] = self.forward
+-
+-        def patched_forward(*forward_args, **forward_kwargs):
+-            return original_forward(*forward_args, graph=graph, **forward_kwargs)
+-
+-        old_forward = self.base_model.forward
+-        self.base_model.forward = MethodType(lambda _self, *a, **kw: patched_forward(*a, **kw), self.base_model)
+-        try:
++        # Patch only image feature extraction. Replacing base.forward with a
++        # wrapper that calls base(...) recursively re-enters that wrapper.
++        with self._transport_context(graph):
+             return self.base_model.generate(*args, **kwargs)
+-        finally:
+-            self.base_model.forward = old_forward

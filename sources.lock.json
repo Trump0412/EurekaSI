@@ -1,0 +1,28 @@
+{
+  "GeoWire": {
+    "url": "https://github.com/Trump0412/GeoWire",
+    "commit": "d427cc7dd849e96682a8153fa6e2d5a30fd348e2",
+    "patches_applied": [
+      "patches/geowire-generation.patch"
+    ]
+  },
+  "GeoPSRO": {
+    "url": "https://github.com/Trump0412/GeoPSRO",
+    "commit": "4d7db6e3e3dc02e5e9197c731a92bf8bacfc8c36",
+    "patches_applied": [
+      "patches/geopsro-scoring-schema.patch"
+    ]
+  },
+  "GeoBridge": {
+    "url": "https://github.com/Trump0412/GeoBridge",
+    "commit": "74cfe79500e59d92af21ab4e7b1a746031a94711",
+    "patches_applied": []
+  },
+  "VSI-official": {
+    "url": "https://github.com/vision-x-nyu/thinking-in-space",
+    "commit": "51e089c3ae69b9435e9489058610f5b3964c56a8",
+    "source_file": "lmms_eval/tasks/vsibench/utils.py",
+    "local_file": "spatial_intelligence/vendor/vsi/utils.py",
+    "sha256": "1cdfd6a839120c4e8d4de6640a3b1d9009cf93755a586e1348ddd4687693bc97"
+  }
+}

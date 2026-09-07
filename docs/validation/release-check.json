@@ -1,0 +1,9 @@
+{
+  "light_archive_tests": {
+    "passed": 50,
+    "skipped_modules": 2,
+    "distributed_deselected": 3
+  },
+  "archive_checksums": "all_verified",
+  "real_gpu_validated": false
+}

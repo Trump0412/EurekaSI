@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-07",
+  "version": "0.2.1",
+  "validation": "static only",
+  "python_version": "3.12.7",
+  "parser_environment": "Existing Anaconda Python; no packages installed",
+  "environment_note": "The initial system Python lacked PyYAML; checks were rerun successfully with the existing parser environment. This does not validate the project runtime environment.",
+  "checks": [
+    {
+      "command": "python scripts/static_check.py",
+      "exit_code": 0,
+      "result": {
+        "status": "static_checks_passed",
+        "counts": {
+          "python": 49,
+          "json": 7,
+          "jsonl": 1,
+          "yaml": 35,
+          "toml": 1,
+          "local_links": 55
+        },
+        "errors": [],
+        "scope": "parsing/local links only; no application imports, tests, downloads, or model execution"
+      }
+    },
+    {
+      "command": "python scripts/release_check.py",
+      "exit_code": 0,
+      "result": {
+        "status": "release_static_checks_passed",
+        "errors": [],
+        "public_files": 146,
+        "runtime_resources": 31,
+        "version": "0.2.1",
+        "scope": "local source selection and metadata only; no build, install, app imports or tests"
+      }
+    }
+  ],
+  "handoff_integrity": "61 SHA256 manifest entries verified; see handoff-provenance.json",
+  "not_run": [
+    "environment installation",
+    "data or model download",
+    "wheel build or installation",
+    "bootstrap scripts",
+    "bash syntax checks",
+    "pytest",
+    "optimizer tests",
+    "training",
+    "inference",
+    "simulators",
+    "distributed execution",
+    "CI"
+  ],
+  "evidence_boundary": "Parsing and release metadata checks do not demonstrate installability, runtime correctness, model compatibility or reproduced scores."
+}

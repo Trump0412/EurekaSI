@@ -1,0 +1,29 @@
+name: base-models-six-benchmarks
+base: configs/inference.yaml
+models:
+- name: qwen3-2b
+  model: qwen3-vl-2b
+- name: qwen25-3b
+  model: qwen25-vl-3b
+- name: internvl3-8b
+  model: internvl3-8b-hf
+benchmarks:
+- name: vsibench
+  manifest: vsibench.test
+- name: revsi
+  manifest: revsi.test
+  # Build the 32-frame annotations with --max-frames 32; keep prescribed views.
+  protocol:
+    name: revsi-prescribed-f32-diagnostic-v1
+    max_frames: 32
+- name: mmsi
+  manifest: mmsi.test
+- name: dsr
+  manifest: dsr.test
+- name: viewspatial
+  manifest: viewspatial.test
+- name: mindcube
+  manifest: mindcube.test
+protocol:
+  name: spatial-common-f8-v1
+  max_frames: 8

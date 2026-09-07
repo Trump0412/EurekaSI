@@ -1,0 +1,93 @@
+output: runs/llava-hf
+model:
+  backend: hf
+  path: /path/to/llava-hf-checkpoint
+  revision: main
+  device: cuda:0
+  dtype: bfloat16
+  text_only: false
+  attention: sdpa
+  trust_remote_code: false
+  adapter: null
+  max_context: 8192
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  options: {}
+teacher:
+  backend: hf
+  path: /path/to/spatial-teacher
+  revision: main
+  device: cuda:1
+  dtype: bfloat16
+  text_only: false
+  attention: sdpa
+  trust_remote_code: false
+  adapter: null
+  max_context: 8192
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  options: {}
+data:
+  train: []
+  heldout:
+  - /path/to/dsr.test.jsonl
+  - /path/to/mmsi.test.jsonl
+  eval: /path/to/dsr.test.jsonl
+protocol:
+  name: spatial-common-f8-v1
+  seed: 3407
+  max_frames: 8
+  image_max_side: 448
+  instruction: Put the final answer in <answer>...</answer>. For multiple choice,
+    output only the option letter inside the tag.
+  generation:
+    max_new_tokens: 256
+    do_sample: false
+  geometry_condition: normal
+train:
+  mode: sft
+  steps: 1000
+  gradient_accumulation: 8
+  learning_rate: 1.0e-05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  seed: 3407
+  save_every: 250
+  group_size: 8
+  algorithm: grpo
+  clip: 0.2
+  beta: 0.02
+  reward_plugin: null
+  numeric_atol: 0.0
+  numeric_rtol: 0.0
+  kl_direction: reverse
+  distill_temperature: 1.0
+  sft_weight: 0.0
+  privileged_answer: true
+  teacher_refresh_steps: 0
+  batch_size: 1
+score:
+  allow_missing: false
+  numeric_atol: 0.0
+  numeric_rtol: 0.0
+  official_scorer: null

@@ -1,0 +1,22 @@
+entry: geopsro_sft
+source_root: workspace
+python: /path/to/geopsro-env/bin/python
+nproc: 1
+env: {}
+args:
+- --model-path
+- /path/to/Qwen3-VL-2B-Instruct
+- --stage1-checkpoint
+- /path/to/geo_adapter.pt
+- --spar-jsonl
+- /path/to/spar.jsonl
+- --llava-jsonl
+- /path/to/llava.jsonl
+- --spar-cache-root
+- /path/to/spar-cache
+- --llava-cache-root
+- /path/to/llava-cache
+- --steps
+- '1000'
+- --output
+- /path/to/runs/geopsro-sft

@@ -1,0 +1,33 @@
+{
+  "status": "static_checks_passed",
+  "counts": {
+    "python": 46,
+    "json": 5,
+    "jsonl": 1,
+    "yaml": 34,
+    "toml": 1,
+    "local_links": 41
+  },
+  "errors": [],
+  "scope": "parsing/local links only; no application imports, tests, downloads, or model execution",
+  "date": "2026-09-07",
+  "validation_kind": "static_only",
+  "runtime_tests": "not_run_by_user_request",
+  "model_execution": "not_run_by_user_request",
+  "environment_installation": "not_performed",
+  "git": "initialized_main_no_staging_or_commit",
+  "config_schema_files_checked": 15,
+  "core_dependency_metadata": "consistent",
+  "original_archives": [
+    {
+      "name": "Spatial_Intelligence_Codebase_v0.2.zip",
+      "sha256": "5c968f43f147b286903ba17884601aa4d6afe65a2abf481428bde4adc867e8e7",
+      "manifest_entries_verified": 123
+    },
+    {
+      "name": "Spatial_Intelligence_Reproduction_v0.2.zip",
+      "sha256": "456fcec3b2474be8fbc16d57d043cc1537170d17eb6e55250013ff84f552a4e3",
+      "manifest_entries_verified": 490
+    }
+  ]
+}

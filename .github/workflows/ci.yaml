@@ -1,0 +1,64 @@
+name: Static contracts, packaging and CPU runtime checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements/core.txt
+      - run: python scripts/static_check.py
+      - run: python scripts/release_check.py
+      - run: bash -n scripts/bootstrap-common.sh scripts/bootstrap.sh scripts/bootstrap-geometry.sh scripts/check.sh
+  packaging:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build --wheel --outdir "$RUNNER_TEMP/wheels"
+      - name: Check installed wheel outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install "$RUNNER_TEMP"/wheels/*.whl
+          cd "$RUNNER_TEMP"
+          unset PYTHONPATH PYTHONHOME
+          export PYTHONNOUSERSITE=1
+          "$RUNNER_TEMP/wheel-env/bin/python" -m spatial_intelligence catalog assets
+          "$RUNNER_TEMP/wheel-env/bin/python" -m spatial_intelligence init --root "$RUNNER_TEMP/wheel-data" --output "$RUNNER_TEMP/wheel-config.yaml"
+          "$RUNNER_TEMP/wheel-env/bin/python" -c 'from spatial_intelligence.io import load_config; from spatial_intelligence.workspace import resource_path; assert load_config("configs/inference.yaml")["model"]["backend"] == "hf"; assert resource_path("patches/geowire-generation.patch").is_file()'
+      - name: Build and verify source archive
+        run: |
+          python scripts/package_release.py --output "$RUNNER_TEMP/source.zip"
+          unzip -q "$RUNNER_TEMP/source.zip" -d "$RUNNER_TEMP/source-check"
+          cd "$RUNNER_TEMP/source-check/spatial-intelligence"
+          sha256sum -c MANIFEST.sha256
+  cpu:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: bash scripts/bootstrap.sh cpu
+      - run: .venv/bin/spatial init --root "$RUNNER_TEMP/spatial"
+      - run: .venv/bin/spatial source geowire
+      - run: .venv/bin/spatial source geopsro
+      - run: bash scripts/check.sh

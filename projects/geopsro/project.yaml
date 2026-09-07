@@ -1,0 +1,13 @@
+name: geopsro
+shared_package: spatial_intelligence
+source: geopsro
+focus: 动态空间状态、策略与奖励设计；验证动态推理与后训练。
+shared_modes:
+- sft
+- rl
+- opd
+- opsd
+- offline_kd
+- inference
+original_sft_launcher: configs/legacy-geopsro-sft.yaml
+method_status: historical implementation via legacy; common fusion is a separate baseline

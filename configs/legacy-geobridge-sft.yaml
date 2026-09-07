@@ -1,0 +1,13 @@
+entry: geobridge_sft_qwen3
+source_root: workspace
+env:
+  PATH: /path/to/geobridge-env/bin:/usr/local/bin:/usr/bin:/bin
+  MODEL_PATH: /path/to/Qwen3-VL-2B-Instruct
+  STAGE1_CHECKPOINT_PATH: /path/to/stage1/best.pt
+  CACHE_DIR: /path/to/cache
+  DATASETS: llava_hound_64k,spar_234k
+  NPROC_PER_NODE: '4'
+  CUDA_VISIBLE_DEVICES: 0,1,2,3
+  TOTAL_BATCH_SIZE: '32'
+  OUTPUT_DIR: /path/to/runs/geobridge-sft
+args: []

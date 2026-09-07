@@ -1,0 +1,20 @@
+entry: geowire_sft
+source_root: workspace
+python: /path/to/geowire-env/bin/python
+nproc: 1
+env: {}
+args:
+- --qa-manifest
+- /path/to/qa.jsonl
+- --tip-manifest
+- /path/to/tip.jsonl
+- --cache-root
+- /path/to/cache
+- --qwen-checkpoint
+- /path/to/Qwen3-VL-2B-Instruct
+- --phase1-checkpoint
+- /path/to/phase1/adapter.pt
+- --steps
+- '1000'
+- --output
+- /path/to/runs/geowire-sft

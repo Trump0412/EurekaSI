@@ -1,0 +1,2 @@
+{"id": "0", "dataset": "toy", "question": "Which option is A?", "answer": "A", "choices": {"A": "first", "B": "second"}, "media": [], "scene_id": "toy-eval-0", "split": "test", "task": "toy-choice"}
+{"id": "1", "dataset": "toy", "question": "Choose B.", "answer": "B", "choices": {"A": "first", "B": "second"}, "media": [], "scene_id": "toy-eval-1", "split": "test", "task": "toy-choice"}

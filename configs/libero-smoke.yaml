@@ -1,0 +1,14 @@
+output: runs/libero-smoke
+suite: libero_spatial
+task_ids:
+- 0
+episodes_per_task: 1
+task_order_index: 0
+seed: 3407
+horizon: 220
+warmup_steps: 10
+image_size: 256
+action_convention: libero_osc_pose_7_normalized
+policy: spatial_intelligence.transfer.policies:ZeroPolicy
+policy_options: {}
+smoke_only: true

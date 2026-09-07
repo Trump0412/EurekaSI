@@ -1,0 +1,18 @@
+{
+  "python": "3.12.13",
+  "packages": {
+    "torch": "2.5.1+cpu",
+    "torchvision": "0.20.1+cpu",
+    "transformers": "4.57.0",
+    "peft": "0.17.1",
+    "accelerate": "1.4.0",
+    "yaml": "6.0.3",
+    "PIL": "11.3.0",
+    "cv2": "4.11.0",
+    "huggingface_hub": "0.36.2"
+  },
+  "cuda": false,
+  "cuda_devices": 0,
+  "workspace": "not initialized",
+  "status": "diagnostic_only_not_a_GPU_training_certification"
+}

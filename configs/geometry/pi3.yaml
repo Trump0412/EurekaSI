@@ -1,0 +1,6 @@
+name: pi3
+weights: /data/spatial/models/pi3
+source_commit: 9fa3ddb3f8d53041f8b2738df404f62223bbaa7b
+device: cuda:0
+grid: 8
+image_size: 518

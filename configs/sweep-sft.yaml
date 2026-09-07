@@ -1,0 +1,10 @@
+model.path:
+- /path/to/Qwen3-VL-2B-Instruct
+- /path/to/Qwen2.5-VL-7B-Instruct
+train.learning_rate:
+- 1.0e-05
+- 2.0e-05
+train.seed:
+- 3407
+- 3408
+- 3409

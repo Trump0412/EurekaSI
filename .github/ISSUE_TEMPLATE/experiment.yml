@@ -1,0 +1,17 @@
+name: Experiment or reproduction report
+description: Report a model, dataset, protocol, and reproducible outcome
+body:
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Model and protocol
+      description: Attach config, source commits, weight/data hashes, frame budget and scorer. Do not upload private data or access tokens.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and observed outcome
+      description: Include full denominator, parse rate, error counts, seeds, hardware and environment report.
+    validations:
+      required: true

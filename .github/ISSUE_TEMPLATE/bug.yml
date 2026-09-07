@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible problem in the shared framework
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the observed behavior and the smallest reproduction. Remove credentials and private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and provenance
+      description: Include the project commit, Python/package versions, resolved config, source commits, hardware, and relevant logs.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Affected boundary
+      description: State whether this affects the shared core, GeoWire, GeoBridge, GeoPSRO, an external engine, or a dataset/weight integration.
+    validations:
+      required: true

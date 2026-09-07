@@ -1,0 +1,13 @@
+name: geobridge
+shared_package: spatial_intelligence
+source: geobridge
+focus: 分层几何 bank 与按需桥接；验证参照系、几何证据利用。
+shared_modes:
+- sft
+- rl
+- opd
+- opsd
+- offline_kd
+- inference
+original_sft_launcher: configs/legacy-geobridge-sft.yaml
+method_status: historical implementation via legacy; common fusion is a separate baseline

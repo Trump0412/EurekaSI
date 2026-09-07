@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-07",
+  "scope": "Selective static adaptation; no legacy history replay or runtime validation",
+  "inputs": [
+    {
+      "file": "trans/Spatial_Intelligence_Handoff_v0.2.1_2026-09-07.zip",
+      "sha256": "c0fc1689cf457a38c7a4453863029aed48159069104f746cd820938629c66896",
+      "manifest_entries_verified": 61
+    },
+    {
+      "file": "trans/HANDOFF_2026-09-07.md",
+      "sha256": "ca8440c51a29741c2e0815f502bd26da9b0bc2de7b2feba4b04e4439eaecd964"
+    }
+  ],
+  "premerge_backup": {
+    "file": "_archives/pre-handoff-merge-2026-09-07.zip",
+    "sha256": "9cd7274386a95e3a2b89aa48e69f24295a1990bb169f24282029b26eb05c69b2",
+    "files": 131
+  },
+  "modified_existing_files": [
+    ".github/workflows/ci.yaml",
+    ".gitignore",
+    "NOTICE.md",
+    "README.en.md",
+    "README.md",
+    "docs/AUDIT.md",
+    "docs/COMPATIBILITY.md",
+    "docs/QUICKSTART.md",
+    "docs/READINESS_REVIEW.md",
+    "docs/TUTORIAL.md",
+    "docs/VALIDATION.md",
+    "projects/geopsro/README.md",
+    "projects/geowire/README.md",
+    "pyproject.toml",
+    "requirements/core.txt",
+    "requirements/native.txt",
+    "scripts/bootstrap-geometry.sh",
+    "scripts/bootstrap.sh",
+    "scripts/check.sh",
+    "scripts/package_release.py",
+    "scripts/static_check.py",
+    "spatial_intelligence/__init__.py",
+    "spatial_intelligence/assets.py",
+    "spatial_intelligence/backends/hf.py",
+    "spatial_intelligence/build_data.py",
+    "spatial_intelligence/cli.py",
+    "spatial_intelligence/io.py",
+    "spatial_intelligence/legacy.py",
+    "spatial_intelligence/platform.py",
+    "spatial_intelligence/quality.py",
+    "spatial_intelligence/training.py",
+    "spatial_intelligence/workspace.py",
+    "tests/test_distributed.py"
+  ],
+  "deleted_existing_files": [],
+  "preserved_evidence_and_locks": [
+    "sources.lock.json",
+    "LICENSE",
+    "requirements/resolved-cpu-py312.txt",
+    "docs/validation/core-junit.xml",
+    "docs/validation/core-pytest.txt",
+    "docs/validation/distributed-blocker.json",
+    "docs/validation/native-doctor.json",
+    "docs/validation/release-check.json",
+    "docs/validation/static-review.json"
+  ],
+  "decisions": "docs/HANDOFF_MERGE.md",
+  "note": "Local inputs and backup are ignored and excluded from public releases. Changed-file list compares existing files only; additions are covered by release selection."
+}

@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: Cite this codebase and the relevant upstream methods and datasets. This revision is unreleased.
+title: EurekaSI
+repository-code: https://github.com/Trump0412/EurekaSI
+url: https://github.com/Trump0412/EurekaSI
+type: software
+version: 0.2.1
+authors:
+  - name: EurekaSI contributors
+abstract: Shared research infrastructure for spatial data, training, geometry, evaluation and transfer. Upstream assets retain their own licenses.
