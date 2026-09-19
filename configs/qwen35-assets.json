@@ -1,0 +1,11 @@
+{
+  "model": {"repo":"Qwen/Qwen3.5-2B","kind":"model","revision":"15852e8c16360a2fea060d615a32b45270f8a8fc","patterns":["*.json","*.jinja","*.txt","*.safetensors"],"destination":"models/Qwen3.5-2B","priority":0},
+  "revsi": {"repo":"3dlg-hcvc/ReVSI","kind":"dataset","revision":"e80b1cde454ab7e2783eff96277038e29e2b2dca","patterns":["32_frame/*","metadata/sampled_video_frame_idx.json","metadata/tiny_set_question_ids.txt","video.zip","README.md"],"destination":"datasets/revsi","priority":0},
+  "vanilla_annotations": {"repo":"zd11024/VG-LLM-Data","kind":"dataset","revision":"4dc7eb0e9a5b481c3683f2af525f4aa4f08a7b8e","patterns":["train/spar_234k.json","train/llava_hound_64k.json"],"destination":"datasets/vg-llm","priority":0},
+  "scaled_annotations": {"repo":"lihy285/GeoThinker","kind":"model","revision":"7ba854d3d9892cff3fbf278c05d661707028b53e","patterns":["train/vlm3r*.json","train/vsi_590k*.json","train/llava_hound_64k*.json","train/spar_234.json"],"destination":"datasets/geothinker","priority":1},
+  "spar_rgb": {"repo":"jasonzhango/SPAR-7M","kind":"dataset","revision":"0fe664cbada1e7c1173fd743e0f781882eebf777","patterns":["scannet.tar.gz","scannetpp.tar.gz","structured3d.tar.gz","README.md"],"destination":"datasets/spar-rgb","priority":1},
+  "hound_media": {"repo":"ShareGPTVideo/train_video_and_instruction","kind":"dataset","revision":"7ed0b5422bfdcfb385cd394d69675b81eb14261c","patterns":["train_300k/*.tar.gz"],"destination":"datasets/hound","priority":1},
+  "spar_rgbd": {"repo":"jasonzhango/SPAR-7M-RGBD","kind":"dataset","revision":"60ef8b2df6430524da86757dec86dcbc55708a41","patterns":["spar-rgbd-*.tar.gz","README.md"],"destination":"datasets/spar-rgbd","priority":2},
+  "vsi590k": {"repo":"nyu-visionx/VSI-590K","kind":"dataset","revision":"346fbd4e41dec974bf24894d0541a49327ee6669","patterns":["*.tar.gz","vsi_590k.jsonl","README.md"],"destination":"datasets/vsi590k","priority":2},
+  "vlm3r_original": {"repo":"Journey9ni/VLM-3R-DATA","kind":"dataset","revision":"aae3535e513d36be5fd0a1edbaab523c8a3c45e4","patterns":["vsibench_train/*.json","vstibench_train/*.json","README.md"],"destination":"datasets/vlm3r-original","priority":2}
+}

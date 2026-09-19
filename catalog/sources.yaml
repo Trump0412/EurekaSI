@@ -47,7 +47,12 @@ geowire:
 geobridge:
   url: https://github.com/Trump0412/GeoBridge
   commit: 74cfe79500e59d92af21ab4e7b1a746031a94711
-  patches: []
+  patches:
+  - patches/geobridge-local-vggt.patch
+  restored_files:
+  - path: scripts/analysis/stage1_vggt_similarity_common.py
+    commit: 68a94e26fcf57b6abdfb407ac1eb4830ce822ed5
+    reason: Release deleted this helper but retained its importing script and tests.
 geopsro:
   url: https://github.com/Trump0412/GeoPSRO
   commit: 4d7db6e3e3dc02e5e9197c731a92bf8bacfc8c36

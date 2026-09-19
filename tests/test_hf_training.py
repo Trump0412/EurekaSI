@@ -72,6 +72,30 @@ def test_response_position_alignment_matches_hf_labels(tiny):
     assert torch.allclose(actual,expected,atol=1e-6)
 
 
+@pytest.mark.parametrize('mode',['opd','opsd'])
+def test_distillation_has_nonzero_learning_signal(tiny,mode):
+    """Unlike identical-teacher smoke, require nonzero KL/gradient and updates."""
+    cfg,root=tiny
+    initial=GPT2LMHeadModel.from_pretrained(cfg['model']['path'])
+    before={k:v.detach().clone() for k,v in initial.state_dict().items()}
+    if mode=='opd':
+        teacher_path=root/'different-teacher'
+        torch.manual_seed(1234)
+        teacher=GPT2LMHeadModel(initial.config)
+        teacher.save_pretrained(teacher_path)
+        PreTrainedTokenizerFast.from_pretrained(cfg['model']['path']).save_pretrained(teacher_path)
+        cfg['teacher']['path']=str(teacher_path)
+    cfg['train'].update(mode=mode,sft_weight=0.0,weight_decay=0.0)
+    if mode=='opsd':cfg['train']['teacher_refresh_steps']=1
+    cfg['output']=str(root/('signal-'+mode))
+    final=train(cfg)
+    records=[json.loads(line) for line in (Path(cfg['output'])/'metrics.jsonl').read_text().splitlines()]
+    assert records[0]['loss']>1e-8
+    assert records[0]['grad_norm']>1e-8
+    after=GPT2LMHeadModel.from_pretrained(final).state_dict()
+    assert any(not torch.equal(before[k],after[k]) for k in before)
+
+
 def test_media_cannot_be_silently_dropped(tiny):
     cfg,_=tiny
     backend=HFBackend(cfg["model"])

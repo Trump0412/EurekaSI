@@ -16,7 +16,15 @@
   "GeoBridge": {
     "url": "https://github.com/Trump0412/GeoBridge",
     "commit": "74cfe79500e59d92af21ab4e7b1a746031a94711",
-    "patches_applied": []
+    "patches_applied": [
+      "patches/geobridge-local-vggt.patch"
+    ],
+    "restored_files": [
+      {
+        "path": "scripts/analysis/stage1_vggt_similarity_common.py",
+        "commit": "68a94e26fcf57b6abdfb407ac1eb4830ce822ed5"
+      }
+    ]
   },
   "VSI-official": {
     "url": "https://github.com/vision-x-nyu/thinking-in-space",

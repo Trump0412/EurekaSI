@@ -12,6 +12,8 @@
 
 ## 四步开始
 
+Qwen3.5-2B 新服务器部署使用独立 Conda 配方，见 [服务器操作手册](docs/SERVER_RUNBOOK.md)：`bash scripts/start-qwen35-study.sh /persistent/your-root`。包含下载、ReVSI baseline、234K+64K SFT 与配对复测阶段门；新 GPU 验收不能用旧随机模型日志代替。
+
 未来执行时，在项目根目录使用 Linux / WSL2 + Python 3.12。Windows 原生终端可维护源码，但 Bash、CUDA/NCCL 和模拟器路径尚未提供原生 Windows 验收。下列步骤会安装环境并运行测试：
 
 ```bash

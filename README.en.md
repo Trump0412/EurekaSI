@@ -1,5 +1,7 @@
 # EurekaSI
 
+For the isolated Conda Qwen3.5-2B / ReVSI baseline → SPAR+Hound SFT → paired evaluation workflow, see [SERVER_RUNBOOK](docs/SERVER_RUNBOOK.md). Start with `bash scripts/start-qwen35-study.sh /persistent/your-root`; queued stages are not completed validation.
+
 v0.2.1 — development version; no formal release yet
 
 [EurekaSI](https://github.com/Trump0412/EurekaSI) is shared spatial intelligence infrastructure for controlled paper experiments and downstream applications. See the [research and application workflow](docs/RESEARCH_WORKFLOW.md) for project boundaries and evidence requirements.

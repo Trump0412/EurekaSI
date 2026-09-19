@@ -27,6 +27,10 @@ def test_unused_gradients_collective_order():
 
 def test_two_rank_training_matches_single_global_batch(tiny):
     cfg,root=tiny
+    # Test collective semantics rather than FP32 reduction-order roundoff in
+    # mathematically zero GPT2 key-bias gradients amplified by Adam's epsilon.
+    # Keep the existing tight weight tolerance; do not loosen it to hide drift.
+    cfg['model']['dtype']='float64'
     rows=read_jsonl(cfg['data']['train'][0]['path'])
     rows.append({**rows[0],'id':'train2','question':'Which answer?','answer':'B'})
     write_jsonl(cfg['data']['train'][0]['path'],rows)

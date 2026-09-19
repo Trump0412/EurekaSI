@@ -10,6 +10,8 @@ from ..io import digest, file_digest
 
 
 class HFBackend:
+    multimodal_types = {"qwen2_vl", "qwen2_5_vl", "qwen3_vl", "internvl", "llava", "llava_next"}
+    chat_options = {}
     def __init__(self, config, training=False):
         from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
         self.config = config
@@ -18,7 +20,7 @@ class HFBackend:
         path = config["path"]
         kwargs = {"revision": config.get("revision", "main"), "trust_remote_code": config.get("trust_remote_code", False)}
         auto_cfg = AutoConfig.from_pretrained(path, **kwargs)
-        if not self.text_only and auto_cfg.model_type not in {"qwen2_vl", "qwen2_5_vl", "qwen3_vl", "internvl", "llava", "llava_next"}:
+        if not self.text_only and auto_cfg.model_type not in self.multimodal_types:
             raise ValueError(f"{auto_cfg.model_type}: supply a tested custom backend; no silent family fallback")
         if self.text_only:
             self.processor = None
@@ -88,7 +90,7 @@ class HFBackend:
             batch = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
         else:
             messages = [{"role": "user", "content": [{"type": "image"} for _ in images] + [{"type": "text", "text": prompt}]}]
-            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **self.chat_options)
             batch = self.processor(text=[text], images=images or None, return_tensors="pt", padding=False)
         batch = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in batch.items()}
         if batch["input_ids"].shape[1] + protocol["generation"]["max_new_tokens"] > self.max_context:

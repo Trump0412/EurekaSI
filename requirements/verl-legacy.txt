@@ -1,0 +1,17 @@
+# Isolated upstream-compatible legacy framework probe, NOT Qwen3.5 rollout.
+verl==0.7.0
+vllm==0.11.2
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
+transformers==4.57.6
+numpy==1.26.4
+peft==0.17.1
+accelerate==1.12.0
+tensordict==0.10.0
+torchdata==0.11.0
+ray[default,cgraph]==2.49.2
+datasets==3.6.0
+pytest==8.3.5
+qwen-vl-utils==0.0.14
+av==16.0.1

@@ -9,7 +9,7 @@ description = "EurekaSI: shared spatial intelligence infrastructure for research
 readme = "README.md"
 keywords = ["spatial-intelligence", "multimodal", "geometry", "evaluation"]
 requires-python = ">=3.10,<3.13"
-dependencies = ["PyYAML==6.0.3", "Pillow==11.3.0", "huggingface-hub==0.36.2", "numpy==1.26.4", "tomli>=2,<3; python_version < '3.11'"]
+dependencies = ["PyYAML==6.0.3", "Pillow==11.3.0", "huggingface-hub>=0.36.2,<2", "numpy==1.26.4", "tomli>=2,<3; python_version < '3.11'"]
 
 [project.urls]
 Repository = "https://github.com/Trump0412/EurekaSI"
@@ -40,7 +40,7 @@ markers = ["distributed: requires local process-group socket communication"]
 [tool.setuptools.data-files]
 "share/spatial-intelligence" = ["sources.lock.json"]
 "share/spatial-intelligence/catalog" = ["catalog/*.yaml"]
-"share/spatial-intelligence/configs" = ["configs/*.yaml"]
+"share/spatial-intelligence/configs" = ["configs/*.yaml", "configs/*.json"]
 "share/spatial-intelligence/configs/geometry" = ["configs/geometry/*.yaml"]
 "share/spatial-intelligence/configs/suites" = ["configs/suites/*.yaml"]
 "share/spatial-intelligence/patches" = ["patches/*.patch"]

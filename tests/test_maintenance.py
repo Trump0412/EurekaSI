@@ -17,6 +17,15 @@ from spatial_intelligence.quality import clean
 from spatial_intelligence.workspace import initialize, settings
 
 
+def test_json_plan_preserves_scientific_notation(tmp_path):
+    cfg=load_config('configs/smoke.yaml')
+    path=tmp_path/'plan.json';write_json(path,cfg)
+    restored=load_config(path)
+    assert restored==cfg
+    assert type(restored['train']['learning_rate']) is float
+    validate(restored)
+
+
 def test_marked_evidence_is_not_a_conflicting_label(tmp_path):
     original = tmp_path / 'original.png'
     Image.new('RGB', (4, 4), 'white').save(original)

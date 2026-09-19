@@ -1,0 +1,17 @@
+# Dedicated Qwen3.5 profile (do not combine with legacy native.txt constraints).
+transformers==5.3.0
+huggingface-hub==1.5.0
+accelerate==1.12.0
+peft==0.18.1
+safetensors==0.7.0
+PyYAML==6.0.3
+Pillow==11.3.0
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+datasets==3.6.0
+pandas==2.2.3
+pytest==8.3.5
+einops==0.8.1
+fla-core==0.5.2
+flash-linear-attention==0.5.2
+loguru==0.7.3

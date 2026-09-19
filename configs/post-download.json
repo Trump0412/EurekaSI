@@ -1,0 +1,9 @@
+{
+  "wait_assets": ["model", "revsi", "vanilla_annotations", "scaled_annotations", "spar_rgb", "hound_media", "spar_rgbd", "vsi590k", "vlm3r_original"],
+  "environment_profiles": ["legacy", "verl"],
+  "benchmarks": ["vsibench", "revsi", "mmsi", "viewspatial", "mindcube", "dsr", "cvbench", "blink", "embspatial", "3dsrbench", "site-image", "site-video"],
+  "training_assets": ["vlm3r-data", "vsi590k", "cambrian-s-data", "spatialstack-data"],
+  "launch_extra_training": false,
+  "download_extra_datasets": false,
+  "notes": "Prepare versioned recipes for extensions; do not silently mix datasets or replace Qwen3.5 with Qwen3-VL. VERL legacy profile is not a Qwen3.5 RL certification."
+}

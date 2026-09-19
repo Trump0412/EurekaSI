@@ -1,4 +1,26 @@
-# 验证记录：当前静态审查与 v0.2 历史证据
+# 验证记录：当前运行验收与 v0.2 历史证据
+
+## 后训练与三个原项目专项审查（2026-09-19）
+
+重新执行公共后训练/目标/适配测试 **26 passed**（含新增 OPD/OPSD 非零学习信号检查）；GeoWire 原生 **29 passed**、GeoPSRO 原生 **10 passed**。GeoBridge 全套收集阶段 **3 errors**，另选核心六个测试文件 **22 passed**，不可合并写成全套通过。当前未部署 VERL，Qwen3.5 公共 OPD/OPSD 后端也尚未接通。环境、源码依据、日志位置与复现门槛见 [专项审查](POSTTRAINING_READINESS_2026-09-19.md)。本次没有更改生产训练逻辑或现有 Conda 依赖。
+
+## Qwen3.5 空间 SFT / ReVSI 部署（2026-09-19）
+
+新建独立 Python 3.12 Conda 环境，PyTorch 2.7.1+cu126、Transformers 5.3.0、FLA 0.5.2，4×A100 40GB；没有覆盖旧 G0.5 环境。`pip check` 通过。原 native profile 仍为独立旧依赖，不能与本 profile 混装。
+
+FLA 的 chunk gated-delta 核已可用；`causal-conv1d` 未安装，卷积分支仍有 PyTorch fallback，不能宣称整条 fast path 全开。正式前后对照保持同一运行环境，后续内核优化需单独测等价与吞吐。
+
+已执行证据：
+
+- 服务器完整 CPU 回归：**86 passed、2 skipped**（缺少两个可选历史源码）；包含两进程训练/推理测试和固定上游 ReVSI scorer 等价检查。日志位于运行根目录 `logs/cpu-tests.log`，旧失败记录保留，末尾为通过结果。
+- 修复 JSON 配置误走 YAML 解析导致 `1e-05` 成为字符串的真实错误，并补测试。分布式 Adam 数值一致性测试改用 FP64 小模型，保留原严格容差，避免零梯度附近 FP32 误差放大；不代表修改了生产训练精度。
+- 原始 Qwen3.5-2B 与 ReVSI 已完整下载；实际准备 **6,158题、380场景、每场景32帧**。
+- 实际模型真实图像 forward/backward gate：最近重验答案位置投影与全 logits loss 均为 **0.0040816772**，梯度有限，峰值已分配显存 **9.55 GiB**。这是构造短回答的接口诊断，不是 SFT loss 或 benchmark 分数；optimizer 更新次数为0。证据：`receipts/model-gate.json`、`logs/model-gate.log`。
+- 四卡16题推理 smoke 完成并保存预测；这16题全部是计数题，不能视为完整 benchmark。随后全量6,158题评测已完成，锁定协议下宏平均 **0.0503971944（5.04%）**。抽查发现有回答在16个生成 token处仍为解释前缀、未给最终答案；这是需要单独量化的格式/截断混杂因素，不能将该分数直接解释为空间能力，也不能用该分数挑训练 checkpoint。原预测保留，后续预算诊断须新建 run，并同步前后对照协议。
+- 后续补充字节分卷流读取、下载进度去重测试，专用测试文件服务器 **7 passed**；此处不把它冒充为再次执行了完整测试集。
+- 已下载 Hound 小分片并准备32条真实样本，记录 sample IDs；四卡 DDP 两步、从 checkpoint-2 恢复到第三步、权重重载推理均已完成。证据为 `runs/diagnostic-ddp/completion.json` 与对应 state/logs；不属于正式 SFT 结果。
+
+仍待验收：ReVSI 输出预算/格式诊断、训练媒体完整性/场景排除数量、1/2/4 micro-batch 实测、一轮正式 SFT 及配对复测。自动排队不等于这些阶段已通过。以 [SERVER_RUNBOOK](SERVER_RUNBOOK.md) 和运行目录中的 receipts/state 为交接入口；不把静态检查或历史小模型测试当成真实全量训练完成。
 
 ## EurekaSI 首次公开提交准备（2026-09-07）
 
@@ -50,6 +72,16 @@
 GeoWire 原 tests 29 通过；GeoPSRO 原 tests 10 通过；GeoBridge HGB 与 Stage1 评分选定 tests 11 通过。原环境为 CPU torch2.14.0，GeoBridge FCP 因缺 torchvision 未收集；没有将环境缺依赖认定为方法失败。历史报告保留在 docs/ 中，新环境的记录放在 docs/validation/，不要混用两个环境的结果。
 
 原问题已复现并保留修复回归：GeoWire generate 递归；GeoPSRO 最终答案误读、零值丢失、缺失金标计为正确。补丁在完整复现档案中已应用，轻量开源包通过 source 命令获取并应用。
+
+## 2026-09-19 服务器增量验收
+
+详细配置、产物路径、限制见 [后训练运行指南](POSTTRAINING_RUNBOOK.md)。
+
+- Qwen3.5 OPD/OPSD：真实八图采样、同词表教师答案位置对齐、非零 KL/梯度/参数更新、保存重载通过；只是一条样本的接口诊断，教师并未证明优于学生。
+- GeoBridge 恢复被上游删除但仍被引用的 helper 后，原生测试 40 passed；GeoWire 29 passed，GeoPSRO 10 passed。GeoBridge 后续增加本地 VGGT `model.pt` 加载补丁，实际缓存和 initializer/FCP 两步训练已通过；不将此前 40 项测试自动算作补丁后的重测。
+- 三个方法均已生成独立真实几何缓存与小规模阶段权重；完整 Stage2、正式样本预算和 benchmark 仍未完成。
+- 新增后训练、扩展队列与按需标记缓存回归：`pytest -q tests/test_qwen35_posttraining.py tests/test_extension_queue.py tests/test_marker_cache.py`，8 passed。另对 34 种真实 SPAR 题型进行 eager/lazy 标记逐像素比较，全部相同。
+- 四卡正式 SFT 尚在数据准备阶段；分层单卡实测给出一轮约 7–11 小时的启动前估算，不是已完成成绩。VERL v6 正在重试，尚未验收完整 rollout/reward/update/checkpoint 链路。
 
 ## 下一道真实验收门槛
 

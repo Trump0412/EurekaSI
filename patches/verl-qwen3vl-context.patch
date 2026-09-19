@@ -1,0 +1,10 @@
+diff --git a/workers/rollout/vllm_rollout/vllm_async_server.py b/workers/rollout/vllm_rollout/vllm_async_server.py
+--- a/workers/rollout/vllm_rollout/vllm_async_server.py
++++ b/workers/rollout/vllm_rollout/vllm_async_server.py
+@@ -198,1 +198,5 @@
+-        self.config.max_model_len = self.model_config.hf_config.max_position_embeddings
++        # Multimodal Qwen stores the context limit in text_config.
++        text_config = self.model_config.hf_config.get_text_config()
++        model_max_len = text_config.max_position_embeddings
++        requested_max_len = self.config.max_model_len or model_max_len
++        self.config.max_model_len = min(requested_max_len, model_max_len)

@@ -1,0 +1,18 @@
+{
+  "geometry-qwen3vl2b": {
+    "repo": "Qwen/Qwen3-VL-2B-Instruct",
+    "kind": "model",
+    "revision": "89644892e4d85e24eaac8bacfd4f463576704203",
+    "patterns": ["*.json", "*.safetensors", "*.txt", "*.jinja"],
+    "priority": 1,
+    "destination": "models/Qwen3-VL-2B-Instruct"
+  },
+  "geometry-vggt": {
+    "repo": "facebook/VGGT-1B",
+    "kind": "model",
+    "revision": "860abec7937da0a4c03c41d3c269c366e82abdf9",
+    "patterns": ["*.json", "model.pt"],
+    "priority": 1,
+    "destination": "models/VGGT-1B"
+  }
+}

@@ -1,0 +1,35 @@
+diff --git a/src/qwen_vl/model/geometry_bank/vggt_bank_extractor.py b/src/qwen_vl/model/geometry_bank/vggt_bank_extractor.py
+index 3a3ee32..ba92222 100644
+--- a/src/qwen_vl/model/geometry_bank/vggt_bank_extractor.py
++++ b/src/qwen_vl/model/geometry_bank/vggt_bank_extractor.py
+@@ -80,14 +80,22 @@ class VGGTBankExtractor(nn.Module):
+ 
+     def load_model(self, model_path: str) -> None:
+         from ..vggt.models.vggt import VGGT
+-
+-        self.vggt = VGGT.from_pretrained(
+-            model_path,
+-            enable_camera=False,
+-            enable_point=False,
+-            enable_depth=False,
+-            enable_track=False,
+-        )
++        from pathlib import Path
++
++        options = dict(enable_camera=False, enable_point=False, enable_depth=False, enable_track=False)
++        local_weight = Path(model_path) / "model.pt"
++        if local_weight.is_file():
++            # Official VGGT publishes model.pt; HubMixin expects another filename.
++            self.vggt = VGGT(**options)
++            state = torch.load(local_weight, map_location="cpu", weights_only=True)
++            state = state.get("model", state)
++            expected = self.vggt.state_dict()
++            if any(key not in state or state[key].shape != value.shape for key, value in expected.items()):
++                raise ValueError("VGGT checkpoint does not cover the full geometry backbone")
++            # Prediction heads are intentionally disabled for layer-feature extraction.
++            self.vggt.load_state_dict({key: state[key] for key in expected}, strict=True)
++        else:
++            self.vggt = VGGT.from_pretrained(model_path, **options)
+         if self.freeze_encoder:
+             for param in self.vggt.parameters():
+                 param.requires_grad = False

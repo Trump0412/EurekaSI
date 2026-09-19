@@ -69,7 +69,9 @@ def load_config(path, overrides=()):
     text = os.path.expandvars(path.read_text(encoding="utf-8"))
     if "${" in text:
         raise ValueError("Unresolved environment variable in config")
-    cfg = yaml.safe_load(text)
+    # YAML 1.1 parses JSON scientific notation such as 1e-05 as a string.
+    # Plans written by write_json must round-trip without changing numeric types.
+    cfg = json.loads(text) if path.suffix.lower() == '.json' else yaml.safe_load(text)
     if not isinstance(cfg, dict):
         raise ValueError("Config must be a mapping")
     return apply_overrides(cfg, overrides)
