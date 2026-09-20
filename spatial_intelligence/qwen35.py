@@ -72,10 +72,19 @@ def load_model(path, training=False, freeze_vision=True):
     return model
 
 
-def completion_loss(model, inputs):
+def completion_loss(model, inputs, reduction='token_mean'):
     inputs=dict(inputs);labels=inputs.pop('labels')
     positions=(labels[:,1:]!=-100).any(0).nonzero().flatten()
     output=model(**inputs,use_cache=False,logits_to_keep=positions)
-    loss=torch.nn.functional.cross_entropy(output.logits.float().reshape(-1,output.logits.shape[-1]),
-                                           labels[:,positions+1].reshape(-1),ignore_index=-100)
+    targets=labels[:,positions+1]
+    if reduction=='sample_mean':
+        token_loss=torch.nn.functional.cross_entropy(output.logits.float().reshape(-1,output.logits.shape[-1]),
+            targets.reshape(-1),ignore_index=-100,reduction='none').reshape_as(targets)
+        counts=(targets!=-100).sum(-1)
+        if not bool((counts>0).all()):raise ValueError('Empty completion')
+        loss=(token_loss.sum(-1)/counts).mean()
+    elif reduction=='token_mean':
+        loss=torch.nn.functional.cross_entropy(output.logits.float().reshape(-1,output.logits.shape[-1]),
+                                               targets.reshape(-1),ignore_index=-100)
+    else:raise ValueError(reduction)
     return loss,output

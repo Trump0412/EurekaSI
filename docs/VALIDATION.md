@@ -94,6 +94,13 @@ GeoWire 原 tests 29 通过；GeoPSRO 原 tests 10 通过；GeoBridge HGB 与 St
 
 ## 下一道真实验收门槛
 
+### 2026-09-20 可选吞吐优化
+
+- 实现有效 batch 内分桶/分配均衡、显式 DeltaNet 后端、sample-mean loss、恢复契约与真实 padding/token 吞吐统计；默认训练行为不变。详见 [吞吐优化](THROUGHPUT_OPTIMIZATION.md)。
+- 服务器运行 `tests/test_throughput.py` 加训练/答案提取/空间评分/视频位置编码回归：46 passed、1 skipped。覆盖确定性、完整 step 与 DDP 尾部样本集合、样本等权 loss/梯度。
+- 实际 A100 上 FLA/PyTorch 算子输出及梯度三种长度通过预设 bf16 容差；最大输出 relative L2≈0.00544，最大梯度 relative L2≈0.00668。不等于整模型等价或加速倍数。
+- `throughput-ablation-v1` 已排在当前 SFT 与配对评测之后，等待 study 锁，不占用四卡。整模型数值门、两轮四卡吞吐及推荐配置待测；当前研究训练没有切换新 sampler/kernel。
+
 ### 2026-09-20 batch 与评测修复增量
 
 - 四卡真实混合样本统一 global batch64：micro1/2/4 分别 10.927/10.080/6.844 samples/s；micro8 OOM，micro16 未测。选择 micro1 + GA16，并从完整 checkpoint200 恢复，已再次产出有限 loss/梯度。证据与边界见 [batch/评测协议](BATCH_AND_EVAL_PROTOCOL.md)。

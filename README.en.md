@@ -1,5 +1,7 @@
 # EurekaSI
 
+Opt-in multimodal bucketing, within-step rank balancing, explicit DeltaNet backends and gated throughput experiments are documented in [THROUGHPUT_OPTIMIZATION](docs/THROUGHPUT_OPTIMIZATION.md). Four-GPU speedup remains pending measurement; active research runs are not modified automatically.
+
 Current Qwen3.5 operation follows the [four-GPU batch and evaluation protocol](docs/BATCH_AND_EVAL_PROTOCOL.md): measured mixed-data throughput, checkpoint resume, native video, ground-truth-blind final-answer extraction and paired ReVSI/VSI-Bench scoring. Historical scores are not validated capability baselines.
 
 For the isolated Conda Qwen3.5-2B / ReVSI baseline → SPAR+Hound SFT → paired evaluation workflow, see [SERVER_RUNBOOK](docs/SERVER_RUNBOOK.md). Start with `bash scripts/start-qwen35-study.sh /persistent/your-root`; queued stages are not completed validation.

@@ -390,11 +390,14 @@ def prepare_probe(root):
          'sample_ids':[r['id'] for r in rows]})
 
 
-def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False):
+def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
+          throughput_policy='legacy',delta_backend_name='auto',loss_reduction='token_mean'):
     import torch
     from transformers import AutoProcessor,Trainer,TrainingArguments,TrainerCallback
     from transformers.trainer_utils import get_last_checkpoint
     from .qwen35 import Collator,load_model,completion_loss
+    if throughput_policy=='balanced' and loss_reduction!='sample_mean':
+        raise ValueError('Balanced scheduling requires explicit sample_mean loss to preserve example weighting')
     if diagnostic and (not name.startswith('diagnostic-') or not 1<=max_steps<=5):
         raise ValueError('Probe is limited to 1..5 steps in a diagnostic-* run, never a research checkpoint')
     gate=json.loads((root/('receipts/train-probe-prepared.json' if diagnostic else 'receipts/train-prepared.json')).read_text())
@@ -418,7 +421,10 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False)
                 print(json.dumps(report),flush=True)
     out=root/'runs'/name
     proc=AutoProcessor.from_pretrained(model_path)
-    model=load_model(model_path,training=True)
+    if delta_backend_name=='auto':model=load_model(model_path,training=True)
+    else:
+        from .throughput import delta_backend
+        with delta_backend(delta_backend_name):model=load_model(model_path,training=True)
     args=TrainingArguments(output_dir=str(out),num_train_epochs=1,max_steps=max_steps,
         per_device_train_batch_size=batch_size,gradient_accumulation_steps=ga,learning_rate=1e-5,
         warmup_ratio=.03,lr_scheduler_type='cosine',weight_decay=.01,bf16=True,tf32=True,
@@ -427,13 +433,35 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False)
         logging_steps=1,save_steps=1 if diagnostic else 100,save_total_limit=3,report_to=[],remove_unused_columns=False,
         ddp_find_unused_parameters=False,seed=3407,data_seed=3407,optim='adamw_torch_fused')
     class CompletionTrainer(Trainer):
+        def _get_train_sampler(self,train_dataset=None):
+            if throughput_policy=='legacy':return super()._get_train_sampler(train_dataset)
+            from .throughput_sampler import EffectiveBatchSampler
+            from .throughput import row_cost
+            return EffectiveBatchSampler(self.train_dataset,[row_cost(r) for r in rows],seed=self.args.data_seed,
+                micro_batch=batch_size,world_size=self.args.world_size,accumulation=ga)
         def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-            loss,outputs=completion_loss(model,inputs)
+            loss,outputs=completion_loss(model,inputs,reduction=loss_reduction)
             return (loss,outputs) if return_outputs else loss
     trainer=CompletionTrainer(model=model,args=args,train_dataset=Rows(),data_collator=Collator(proc),callbacks=[Telemetry()])
     trainer.model_accepts_loss_kwargs=False
     last=get_last_checkpoint(str(out)) if out.exists() else None
     if out.exists() and any(out.iterdir()) and not last:raise ValueError('Nonempty training output without resumable checkpoint')
+    import importlib.metadata
+    versions={}
+    for package in ('torch','transformers','accelerate','flash-linear-attention','fla-core'):
+        try:versions[package]=importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:versions[package]=None
+    contract={'layout':throughput_policy,'delta_backend':delta_backend_name,'loss_reduction':loss_reduction,
+              'scheduler_version':'within-step-balanced-v1','packages':versions,
+              'micro_batch':batch_size,'ga':ga,'world_size':args.world_size,'seed':args.data_seed}
+    contract_path=out/'throughput-contract.json'
+    if contract_path.exists() and json.loads(contract_path.read_text())!=contract:
+        raise ValueError('Resume throughput contract changed; use an explicitly audited migration/new run')
+    if last and not contract_path.exists() and (throughput_policy!='legacy' or delta_backend_name!='auto' or loss_reduction!='token_mean'):
+        raise ValueError('Do not silently change an unversioned checkpoint training contract')
+    if trainer.is_world_process_zero():
+        from .throughput import kernel_inventory
+        dump(contract_path,contract);dump(out/'kernel-inventory.json',kernel_inventory(model))
     trainer.train(resume_from_checkpoint=last)
     trainer.save_model(str(out/'final'))
     if trainer.is_world_process_zero():
@@ -484,6 +512,9 @@ def main():
     p.add_argument('--batch-size',type=int,default=1);p.add_argument('--ga',type=int,default=16)
     p.add_argument('--limit',type=int);p.add_argument('--max-steps',type=int,default=-1)
     p.add_argument('--diagnostic',action='store_true')
+    p.add_argument('--throughput-policy',choices=['legacy','balanced'],default='legacy')
+    p.add_argument('--delta-backend',choices=['auto','reference','fla'],default='auto')
+    p.add_argument('--loss-reduction',choices=['token_mean','sample_mean'],default='token_mean')
     a=p.parse_args();root=Path(a.root).resolve();model=a.model or str(root/'models/Qwen3.5-2B')
     if a.mode=='prepare-revsi':prepare_revsi(root)
     elif a.mode=='prepare-train':prepare_train(root)
@@ -492,7 +523,8 @@ def main():
     elif a.mode=='profile':profile(root,model,a.batch_size)
     elif a.mode=='eval':evaluate(root,model,a.name,a.batch_size,a.limit)
     elif a.mode=='merge-eval':merge_eval(root,a.name)
-    elif a.mode=='train':train(root,model,a.name,a.batch_size,a.ga,a.max_steps,a.diagnostic)
+    elif a.mode=='train':train(root,model,a.name,a.batch_size,a.ga,a.max_steps,a.diagnostic,
+                             a.throughput_policy,a.delta_backend,a.loss_reduction)
 
 
 if __name__=='__main__':main()

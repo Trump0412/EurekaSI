@@ -12,6 +12,8 @@
 
 ## 四步开始
 
+可变长多模态训练的有效 batch 内分桶、rank 均衡、FLA 数值门和自动吞吐对照见 [吞吐优化](docs/THROUGHPUT_OPTIMIZATION.md)。当前为可选功能；四卡加速倍数待实测。
+
 Qwen3.5 当前四卡测速、断点恢复与 ReVSI/VSI-Bench 最终答案提取采用 [batch 与评测协议 v2](docs/BATCH_AND_EVAL_PROTOCOL.md)。原始输出、解析结果和逐题指标都保留；不要将历史 image-only/16-token 分数当作已验证基线。
 
 Qwen3.5-2B 新服务器部署使用独立 Conda 配方，见 [服务器操作手册](docs/SERVER_RUNBOOK.md)：`bash scripts/start-qwen35-study.sh /persistent/your-root`。包含下载、ReVSI baseline、234K+64K SFT 与配对复测阶段门；新 GPU 验收不能用旧随机模型日志代替。

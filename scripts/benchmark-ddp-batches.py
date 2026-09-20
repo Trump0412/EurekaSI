@@ -29,24 +29,39 @@ def worker(a):
     dist.init_process_group('nccl');assert dist.get_world_size()==4
     torch.manual_seed(3407);torch.backends.cuda.matmul.allow_tf32=True
     rows=[json.loads(s) for s in (a.output/'samples.jsonl').read_text().splitlines()]
-    local_rows=rows[rank::4]
+    tag=getattr(a,'tag',None) or f'b{a.micro}'
+    layout=getattr(a,'layout','legacy');backend=getattr(a,'backend','auto')
+    reduction=getattr(a,'reduction','token_mean')
+    if layout=='balanced':
+        from spatial_intelligence.throughput import balanced_order,row_cost
+        order=balanced_order(list(range(len(rows))),[row_cost(r) for r in rows],
+            micro_batch=a.micro,world_size=4,accumulation=16//a.micro)
+        local_rows=[rows[i] for s in range(0,len(order),4*a.micro) for i in order[s+rank*a.micro:s+(rank+1)*a.micro]]
+    else:local_rows=rows[rank::4]
     processor=AutoProcessor.from_pretrained(a.root/'models/Qwen3.5-2B')
     loader=torch.utils.data.DataLoader(local_rows,batch_size=a.micro,shuffle=False,
         num_workers=8,pin_memory=True,persistent_workers=True,collate_fn=Collator(processor))
-    model=load_model(str(a.checkpoint),training=True).cuda()
+    if backend=='auto':model=load_model(str(a.checkpoint),training=True).cuda()
+    else:
+        from spatial_intelligence.throughput import delta_backend
+        with delta_backend(backend):model=load_model(str(a.checkpoint),training=True).cuda()
+    from spatial_intelligence.throughput import kernel_inventory
+    if rank==0:dump(a.output/f'{tag}-kernels.json',kernel_inventory(model))
     model=DistributedDataParallel(model,device_ids=[local],find_unused_parameters=False)
     optimizer=torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],lr=1e-5,weight_decay=.01,fused=True)
     iterator=iter(loader);ga=16//a.micro;records=[]
     for step in range(a.steps+1):
         # Final global batch contains longest real rows, excluded from speed, included in memory gate.
         dist.barrier();torch.cuda.synchronize();start=time.perf_counter();data_seconds=0
-        optimizer.zero_grad(set_to_none=True);loss_sum=0.
+        optimizer.zero_grad(set_to_none=True);loss_sum=0.;real_tokens=0;padded_tokens=0;answer_tokens=0
         for micro in range(ga):
             before=time.perf_counter();cpu_batch=next(iterator);data_seconds+=time.perf_counter()-before
+            real_tokens+=int(cpu_batch['attention_mask'].sum());padded_tokens+=cpu_batch['input_ids'].numel()
+            answer_tokens+=int((cpu_batch['labels']!=-100).sum())
             batch={k:v.cuda(non_blocking=True) for k,v in cpu_batch.items()}
             sync=model.no_sync() if micro<ga-1 else contextlib.nullcontext()
             with sync,torch.autocast('cuda',dtype=torch.bfloat16):
-                loss,outputs=completion_loss(model,batch)
+                loss,outputs=completion_loss(model,batch,reduction=reduction)
                 (loss/ga).backward()
             loss_sum+=float(loss.detach())/ga
             del outputs,loss,batch,cpu_batch
@@ -57,18 +72,25 @@ def worker(a):
             torch.cuda.max_memory_allocated()/2**30,torch.cuda.max_memory_reserved()/2**30],device='cuda')
         dist.all_reduce(values,op=dist.ReduceOp.MAX)
         elapsed,data_wait,allocated,reserved=values.tolist()
+        tokens=torch.tensor([real_tokens,padded_tokens,answer_tokens],device='cuda',dtype=torch.long)
+        dist.all_reduce(tokens,op=dist.ReduceOp.SUM)
+        real_tokens,padded_tokens,answer_tokens=tokens.tolist()
         record={'step':step+1,'seconds':elapsed,'data_wait_max_seconds':data_wait,
                 'peak_allocated_gib':allocated,'peak_reserved_gib':reserved,'rank0_loss':loss_sum,
-                'stress_batch':step==a.steps}
+                'stress_batch':step==a.steps,'real_tokens':real_tokens,'padded_tokens':padded_tokens,
+                'answer_tokens':answer_tokens,'padding_fraction':1-real_tokens/padded_tokens}
         records.append(record)
         if rank==0:
-            dump(a.output/f'b{a.micro}-progress.json',record);print(json.dumps(record),flush=True)
+            dump(a.output/f'{tag}-progress.json',record);print(json.dumps(record),flush=True)
     if rank==0:
         measured=records[a.warmup:a.steps];seconds=sum(x['seconds'] for x in measured)
         total=torch.cuda.get_device_properties(local).total_memory/2**30
-        dump(a.output/f'b{a.micro}.json',{'status':'complete','micro_batch':a.micro,'ga':ga,
+        dump(a.output/f'{tag}.json',{'status':'complete','micro_batch':a.micro,'ga':ga,
+            'layout':layout,'backend':backend,'loss_reduction':reduction,
             'effective_batch':64,'world_size':4,'warmup_steps':a.warmup,'timed_steps':len(measured),
             'samples_per_second':64*len(measured)/seconds,
+            'effective_tokens_per_second':sum(x['real_tokens'] for x in measured)/seconds,
+            'padding_fraction':1-sum(x['real_tokens'] for x in measured)/sum(x['padded_tokens'] for x in measured),
             'median_seconds_per_step':statistics.median(x['seconds'] for x in measured),
             'peak_reserved_gib':max(x['peak_reserved_gib'] for x in records),'gpu_total_gib':total,
             'checkpoint':str(a.checkpoint),'records':records,'diagnostic_only':True,
@@ -81,6 +103,9 @@ def main():
     p.add_argument('--root',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--checkpoint',type=Path,required=True);p.add_argument('--micro',type=int)
     p.add_argument('--steps',type=int,default=20);p.add_argument('--warmup',type=int,default=4)
+    p.add_argument('--tag');p.add_argument('--layout',choices=['legacy','balanced'],default='legacy')
+    p.add_argument('--backend',choices=['auto','reference','fla'],default='auto')
+    p.add_argument('--reduction',choices=['token_mean','sample_mean'],default='token_mean')
     p.add_argument('--detach',action='store_true');a=p.parse_args()
     if a.detach:
         a.output.mkdir(parents=True,exist_ok=False)
