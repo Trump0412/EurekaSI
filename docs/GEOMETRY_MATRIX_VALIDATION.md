@@ -67,4 +67,14 @@ memory. This uses only one post-cold-start update and is a rough diagnostic
 estimate, not a full two-stage ETA or the final selected throughput. Larger
 microbatches still require the declared gates.
 
+A subsequent four-GPU trainable-VGGT ZeRO-3 SFT diagnostic on that mixed sample
+set completed two optimizer updates with all four intended components updated.
+Its second update took 79.7438 seconds for 64 samples (0.80264 samples/s), with
+34.379 GiB maximum reserved memory. A microbatch-1 extrapolation is about 103
+hours for SFT alone, or 118 hours including the rough alignment estimate, before
+evaluation and overhead. This is one warmed update, not a selected final ETA.
+The much slower joint stage must not inherit the alignment-only estimate.
+Larger microbatches and alternative distributed runtimes require their own
+timing, long-sample memory and checkpoint acceptance before adoption.
+
 Private deployment mappings, machine paths and raw logs remain outside Git.
