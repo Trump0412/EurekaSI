@@ -28,7 +28,9 @@ def main():
         for row in rows:
             records.append({'data_source':'hound_diagnostic_train',
                 'prompt':[{'role':'user','content':'<image>'*len(row['media'])+'\n'+row['question']}],
-                'images':[{'bytes':Path(path).read_bytes(),'path':None} for path in row['media']],
+                # VERL 0.7's nested byte-dict conversion leaves a dict at the
+                # qwen-vl-utils boundary; shared absolute paths decode correctly.
+                'images':[str(Path(path).resolve(strict=True)) for path in row['media']],
                 'ability':'image_caption_diagnostic',
                 'reward_model':{'style':'rule','ground_truth':row['answer']},
                 'extra_info':{'index':row['id'],'split':'train','diagnostic_only':True}})

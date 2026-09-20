@@ -83,7 +83,23 @@ GeoWire 原 tests 29 通过；GeoPSRO 原 tests 10 通过；GeoBridge HGB 与 St
 - 新增后训练、扩展队列与按需标记缓存回归：`pytest -q tests/test_qwen35_posttraining.py tests/test_extension_queue.py tests/test_marker_cache.py`，8 passed。另对 34 种真实 SPAR 题型进行 eager/lazy 标记逐像素比较，全部相同。
 - 四卡正式 SFT 尚在数据准备阶段；分层单卡实测给出一轮约 7–11 小时的启动前估算，不是已完成成绩。VERL v6 正在重试，尚未验收完整 rollout/reward/update/checkpoint 链路。
 
+## 2026-09-20 恢复正式 SFT
+
+- 准备阶段凌晨因把 SPAR 原始 ID 当唯一键而退出，正式训练当时没有启动。现采用过滤前源文件行号构造唯一键，保留原始 ID，不删除同 ID 的不同记录。
+- `tests/test_qwen35_study.py` 在服务器运行 8 passed（包含新 ID 回归与官方 scorer 对照）。全部 297899 条 manifest 的唯一键、源 ID 对应与源顺序另行审计通过；SPAR 234149、Hound 63750，仍仅排除 128 条 ReVSI 场景重叠记录。
+- 清单构造改为保序线程池并缓存重复路径检查，保留缺图失败规则。复用全部原渲染缓存，不更改图像或答案。
+- 长样本 batch 1/2/4 的单卡实测吞吐分别约 1.373/1.218/1.272 samples/s，选择每卡 1、GA16、四卡 global batch64。四卡两步 smoke loss 1.64743 / 2.35719，梯度有限，保存并退出成功。正式 SFT 已由监督器启动，最终成绩仍待测。
+- VERL 原图路径修复已通过原生 RLHFDataset → qwen-vl-utils 的真实八图 CPU 解码/顺序检查；尚未重跑 GSPO，不将输入检查算作训练闭环成功。
+- 基线 ReVSI 宏平均 0.05039719436，6158 条完整输出；抽查有解释性输出在 16-token 上限截断。该分数仅描述锁定协议，不等同模型完整能力。若修改输出预算，必须独立命名并成对重跑 baseline/SFT，不能混用旧分数。
+
 ## 下一道真实验收门槛
+
+### 2026-09-20 batch 与评测修复增量
+
+- 四卡真实混合样本统一 global batch64：micro1/2/4 分别 10.927/10.080/6.844 samples/s；micro8 OOM，micro16 未测。选择 micro1 + GA16，并从完整 checkpoint200 恢复，已再次产出有限 loss/梯度。证据与边界见 [batch/评测协议](BATCH_AND_EVAL_PROTOCOL.md)。
+- 服务器答案提取、VSI 官方算术/聚合与训练回归合计 36 passed、1 skipped；另视频位置编码兼容回归 1 passed。Windows 无 torch：相关梯度测试不能在本机验收，不把本机缺依赖算作服务器通过。
+- 原生视频修复后 ReVSI 13条 smoke：解析100%、截断0%、strict30.00、extracted30.71；非完整基准成绩。VSI-Bench 5130条/288视频已准备，debiased v1为2362条，按场景ID检查与当前SFT交叉0条。
+- 完整新协议 ReVSI/VSI 的 baseline/SFT 结果待测；旧5.04保留作历史协议诊断，不作可信能力基线。
 
 1. 在允许进程通信的服务器或 GitHub CI 运行完整 tests；在 GPU 运行 NCCL 单卡/双卡等效检查。
 2. 每个真实 Qwen2/2.5/3-VL、InternVL-HF/LLaVA-HF 权重至少做图像输入、梯度、保存/重载验证。

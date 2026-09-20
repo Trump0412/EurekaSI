@@ -114,6 +114,8 @@ def main():
             if status=='failed':raise RuntimeError('Environment setup failed')
             time.sleep(15)
         run(root,'cpu-tests',[py,'-m','pytest','tests','-q'],env)
+        run(root,'start-vsibench-download',[sys.executable,str(REPO/'scripts/fetch-study-assets.py'),
+            '--root',str(root),'--catalog',str(REPO/'configs/spatial-eval-assets.json'),'--detach'],env)
         await_assets(root,['model','revsi'])
         run(root,'prepare-revsi',[py,'-m','spatial_intelligence.study','prepare-revsi','--root',str(root)],env)
         run(root,'model-gate',[py,'-m','spatial_intelligence.study','verify-model','--root',str(root)],env)
@@ -127,12 +129,17 @@ def main():
             except Exception as e:errors.append(str(e));atomic(root/'state/prepare-train.json',{'status':'failed','error':str(e)})
         prep=threading.Thread(target=prepare,daemon=True);prep.start()
         launch=[py,'-m','torch.distributed.run','--standalone','--nproc_per_node=4','-m','spatial_intelligence.study']
-        def evaluate(name,model=None,limit=None):
-            cmd=launch+['eval','--root',str(root),'--name',name,'--batch-size','2']
-            if model:cmd+=['--model',str(model)]
-            if limit:cmd+=['--limit',str(limit)]
-            run(root,name,cmd,env)
-            run(root,name+'-score',[py,'-m','spatial_intelligence.study','merge-eval','--root',str(root),'--name',name],env)
+        def evaluate(name,model=None,limit=None,benchmark='revsi'):
+            name+='-video-final-v1'
+            opts=['--root',str(root),'--name',name,'--benchmark',benchmark,'--model',str(model or root/'models/Qwen3.5-2B'),
+                  '--answer-format','tagged','--max-new-tokens','512','--smoke-per-type','1' if limit else '0']
+            script=str(REPO/'scripts/evaluate-spatial.py')
+            run(root,name,launch[:-2]+[script,*opts],env)
+            run(root,name+'-score',[py,script,*opts,'--merge'],env)
+            report=json.loads((root/'runs'/name/'metrics.json').read_text())
+            if limit and (report['parse_rate']<.9 or report['truncation_rate']>.05):
+                raise RuntimeError('Evaluation format gate failed; do not expand into a misleading full benchmark')
+            return report
         evaluate('baseline-smoke',limit=16)
         evaluate('baseline-revsi32')
         # Validate real-data DDP and checkpoint recovery before the full media wait.
@@ -151,6 +158,7 @@ def main():
         evaluate('diagnostic-reload',root/'runs/diagnostic-ddp/final',limit=16)
         prep.join()
         if errors:raise RuntimeError(errors[0])
+        run(root,'prepare-vsibench',[py,str(REPO/'scripts/prepare-vsibench.py'),'--root',str(root)],env)
         # Auxiliary diagnostics may still own allocated cards. Never collide with full DDP.
         while True:
             usage=subprocess.check_output(['nvidia-smi','--id='+env.get('CUDA_VISIBLE_DEVICES','0,1,2,3'),
@@ -158,26 +166,26 @@ def main():
             if all(int(v.strip())<500 for v in usage.splitlines()):break
             atomic(root/'state/waiting-gpus.json',{'status':'waiting','memory_mib':usage,'updated':time.time()})
             time.sleep(15)
-        # Different disposable candidates run on separate GPUs, not beside full DDP.
+        # Real mixed-row four-rank measurements, not single-card longest-row proxies.
         visible=env.get('CUDA_VISIBLE_DEVICES','0,1,2,3').split(',')
         if len(visible)!=4:raise ValueError('This locked recipe requires exactly four visible GPUs')
-        from concurrent.futures import ThreadPoolExecutor
-        def bench(pair):
-            i,b=pair
-            run(root,f'profile-b{b}',[py,'-m','spatial_intelligence.study','profile','--root',str(root),'--batch-size',str(b)],
-                dict(env,CUDA_VISIBLE_DEVICES=visible[i]))
-        with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(bench,enumerate([1,2,4])))
-        profiles=[json.loads((root/'receipts'/f'profile-b{b}.json').read_text()) for b in [1,2,4]]
-        safe=[x for x in profiles if x['status']=='complete' and x['peak_reserved_gib']<.92*x['gpu_total_gib']]
-        if not safe:raise RuntimeError('No safe full-SFT batch; review memory before changing model or input budget')
-        selected=max(safe,key=lambda x:x['samples_per_second']);micro=selected['batch_size'];ga=64//(4*micro)
-        atomic(root/'receipts/batch-selection.json',{'status':'complete','selected':selected,'candidates':profiles,'global_batch':64,'ga':ga})
+        bench_out=root/'runs/diagnostic-ddp-batches-fresh-v1'
+        run(root,'profile-ddp-mixed-v1',[sys.executable,str(REPO/'scripts/benchmark-ddp-batches.py'),'--root',str(root),
+            '--output',str(bench_out),'--checkpoint',str(root/'models/Qwen3.5-2B')],env)
+        selection=json.loads((bench_out/'selection.json').read_text());selected=selection['selected']
+        micro=selected['micro_batch'];ga=selected['ga']
+        atomic(root/'receipts/batch-selection.json',selection)
         run(root,'sft-smoke',launch+['train','--root',str(root),'--name','sft-smoke','--batch-size',str(micro),'--ga','1','--max-steps','2'],env)
         run(root,'sft',launch+['train','--root',str(root),'--name','sft-spar234k-hound64k','--batch-size',str(micro),'--ga',str(ga)],env)
         evaluate('sft-revsi32',root/'runs/sft-spar234k-hound64k/final')
-        before=json.loads((root/'runs/baseline-revsi32/metrics.json').read_text())
-        after=json.loads((root/'runs/sft-revsi32/metrics.json').read_text())
-        atomic(root/'runs/comparison.json',{'baseline':before,'sft':after,'delta':after['overall_acc']-before['overall_acc']})
+        before=json.loads((root/'runs/baseline-revsi32-video-final-v1/metrics.json').read_text())
+        after=json.loads((root/'runs/sft-revsi32-video-final-v1/metrics.json').read_text())
+        atomic(root/'runs/comparison-video-final-v1.json',{'baseline':before,'sft':after,
+            'delta_extracted_points':after['extracted']['overall_score']-before['extracted']['overall_score']})
+        vsi_before=evaluate('baseline-vsibench',benchmark='vsibench')
+        vsi_after=evaluate('sft-vsibench',root/'runs/sft-spar234k-hound64k/final',benchmark='vsibench')
+        atomic(root/'runs/comparison-vsibench-video-final-v1.json',{'baseline':vsi_before,'sft':vsi_after,
+            'delta_extracted_points':vsi_after['extracted']['overall_score']-vsi_before['extracted']['overall_score']})
         atomic(root/'state/study.json',{'status':'complete','finished':time.time()})
     except Exception as e:
         atomic(root/'state/study.json',{'status':'failed','error':str(e),'time':time.time()});raise

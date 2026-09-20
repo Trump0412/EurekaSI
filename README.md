@@ -8,9 +8,11 @@
 
 面向 GeoWire、GeoBridge、GeoPSRO 和新的空间智能研究：共用环境配置、数据清单、几何缓存、SFT / RL / OPD / OPSD、推理评测与实验溯源。三个项目的差异留在 `projects/`，公共实现只有一套。
 
-当前目录是准备开源的公共代码库。最近一次维护仅做静态审查和代码修复，未安装环境、下载数据、训练或推理；本轮回归用例也尚未执行。本轮交接增量的取舍见 [合并审查](docs/HANDOFF_MERGE.md)，逐流程结论见 [就绪度审查](docs/READINESS_REVIEW.md)。原交付附带的 CPU/小模型测试日志保留为历史证据，见 [VALIDATION](docs/VALIDATION.md)。
+当前目录是公开维护的研究代码库。早期维护仅做静态审查；后续 Qwen3.5 服务器训练、原生视频 smoke 与针对性回归的实际证据见 [VALIDATION](docs/VALIDATION.md)，完整配对 benchmark 仍待完成。交接取舍见 [合并审查](docs/HANDOFF_MERGE.md)，其他流程的未验收能力见 [就绪度审查](docs/READINESS_REVIEW.md)。历史 CPU/小模型日志不代替新 GPU 验收。
 
 ## 四步开始
+
+Qwen3.5 当前四卡测速、断点恢复与 ReVSI/VSI-Bench 最终答案提取采用 [batch 与评测协议 v2](docs/BATCH_AND_EVAL_PROTOCOL.md)。原始输出、解析结果和逐题指标都保留；不要将历史 image-only/16-token 分数当作已验证基线。
 
 Qwen3.5-2B 新服务器部署使用独立 Conda 配方，见 [服务器操作手册](docs/SERVER_RUNBOOK.md)：`bash scripts/start-qwen35-study.sh /persistent/your-root`。包含下载、ReVSI baseline、234K+64K SFT 与配对复测阶段门；新 GPU 验收不能用旧随机模型日志代替。
 

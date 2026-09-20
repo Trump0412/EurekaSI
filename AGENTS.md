@@ -1,5 +1,7 @@
 # Repository maintenance
 
+- Qwen3.5 batch selection and spatial scoring now follow `docs/BATCH_AND_EVAL_PROTOCOL.md`: four-rank mixed-data throughput, native video, ground-truth-blind final extraction, paired inference contracts. Preserve legacy results; never equate the old 5.04 score with a validated capability baseline.
+
 - For OPD/OPSD, VERL or geometry-stage work, also read `docs/POSTTRAINING_RUNBOOK.md`. Keep Qwen3.5 and legacy environments separate; native tests, real-image updates, cache validity and full reproduction are distinct acceptance levels. Do not treat diagnostic two-step weights as trained method checkpoints.
 
 - For Qwen3.5/ReVSI server work, first read `docs/SERVER_RUNBOOK.md` and `projects/qwen35-revsi/README.md`. Obtain SSH/root/GPU allocation, inspect receipts/processes, reuse the persistent supervisor, and verify a real first output. Do not report downloads/queues as completed training or fill paid GPUs with dummy work.

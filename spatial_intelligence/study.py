@@ -15,6 +15,12 @@ import zipfile
 import io
 
 
+def training_identity(dataset, source_index, source_id):
+    """Released source IDs are not unique; index is in the pinned source BEFORE filtering."""
+    return {'id':f'{dataset}::row::{source_index}',
+            'source_id':str(source_id),'source_index':source_index}
+
+
 def dump(path, obj):
     path.parent.mkdir(parents=True,exist_ok=True)
     temp=path.with_suffix(path.suffix+'.tmp')
@@ -300,9 +306,16 @@ def prepare_train(root):
                 progress={'status':'rendering','rows_done':n,'rows_total':len(sources['spar']),
                           'elapsed_seconds':elapsed,'eta_seconds':elapsed/n*(len(sources['spar'])-n)}
                 dump(root/'receipts/train-render-progress.json',progress);print(json.dumps(progress),flush=True)
+    from functools import lru_cache
+    @lru_cache(maxsize=None)
+    def resolve_spar_image(rel):
+        candidates=[media/rel,media/'spar'/rel,media/'spar'/str(rel).removeprefix('spar/')]
+        found=next((p for p in candidates if p.is_file()),None)
+        if found is None:raise FileNotFoundError(f'SPAR image missing: {rel}')
+        return str(found)
     excluded=[];prepared=[]
-    for ds,raw_rows in sources.items():
-        for i,raw in enumerate(raw_rows):
+    def prepare_one(item):
+            ds,i,raw=item
             qa=conversation_qa(raw)
             if ds=='hound':
                 paths=[str(media/p) for p in raw['images']]
@@ -311,25 +324,28 @@ def prepare_train(root):
             else:
                 clean=[]
                 for rel in raw.get('images',[]):
-                    candidates=[media/rel,media/'spar'/rel,media/'spar'/str(rel).removeprefix('spar/')]
-                    found=next((p for p in candidates if p.is_file()),None)
-                    if found is None:raise FileNotFoundError(f'SPAR image missing: {rel}')
-                    clean.append(str(found))
+                    clean.append(resolve_spar_image(rel))
                 if not clean:raise ValueError('SPAR sample has no explicit images')
                 parts=Path(raw['images'][0]).parts
                 scene=parts[parts.index('images')+1]
                 paths=clean
             if scene in heldout:
-                excluded.append({'dataset':ds,'id':str(raw['id']),'scene_id':scene,'reason':'ReVSI scene overlap'});continue
+                return None,{**training_identity(ds,i,raw['id']),'dataset':ds,'scene_id':scene,'reason':'ReVSI scene overlap'}
             if ds=='spar' and raw.get('spar_info'):
                 info=json.loads(raw['spar_info']) if isinstance(raw['spar_info'],str) else raw['spar_info']
                 folder=root/'frames/spar-marked'/str(i);marker=folder/'complete.json'
                 paths=materialize(clean,info,renderer.DRAW_FUNCTIONS[info['type']],folder)
             if len(paths)>32:raise ValueError('Unexpected >32 views; no silent subsampling')
-            prepared.append({'id':ds+'::'+str(raw['id']),'dataset':ds,'scene_id':scene,'split':'train',
+            return {**training_identity(ds,i,raw['id']),'dataset':ds,'scene_id':scene,'split':'train',
                              'question':qa['question'],'answer':str(qa['answer']),'media':paths,'geometry_media':clean,
-                             'instruction':'','source_row':i})
-            if i%1000==0:print('PREPARED',ds,i,'/',len(raw_rows),flush=True)
+                             'instruction':'','source_row':i},None
+    for ds,raw_rows in sources.items():
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            # map preserves source order; never append in task-completion order.
+            for i,(row,exclusion) in enumerate(pool.map(prepare_one,((ds,i,r) for i,r in enumerate(raw_rows)))):
+                if row is not None:prepared.append(row)
+                if exclusion is not None:excluded.append(exclusion)
+                if i%1000==0:print('PREPARED',ds,i,'/',len(raw_rows),flush=True)
     ids=[x['id'] for x in prepared]
     if len(ids)!=len(set(ids)):raise ValueError('Duplicate training IDs')
     jsonl(root/'manifests/sft.train.jsonl',prepared);jsonl(root/'manifests/train-exclusions.jsonl',excluded)

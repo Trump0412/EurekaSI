@@ -1,5 +1,7 @@
 # 新服务器：Qwen3.5 → ReVSI → 空间 SFT → ReVSI
 
+**2026-09-20 更新：** 当前 batch 与评测入口以 [四卡测速与评测协议 v2](BATCH_AND_EVAL_PROTOCOL.md) 为准。下文单卡长样本选择、多图/16-token 协议描述的是旧流程，保留用于解释历史记录，不再作为新实验默认配置。
+
 Qwen3.5 OPD/OPSD、隔离 VERL/GSPO、三个几何项目的真实缓存验收见 [后训练操作指南](POSTTRAINING_RUNBOOK.md)。
 
 这是部署入口，不是已完成实验的成绩单。研究协议见 [实验契约](../projects/qwen35-revsi/README.md)。保留原 CLI/环境；本配方使用独立 Conda profile，不能混装 `native.txt`。

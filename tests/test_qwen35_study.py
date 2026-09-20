@@ -3,7 +3,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 from spatial_intelligence.revsi_scoring import score_row,aggregate
-from spatial_intelligence.study import safe_destination,JoinedReader
+from spatial_intelligence.study import safe_destination,JoinedReader,training_identity
+
+
+def test_training_identity_preserves_repeated_source_ids():
+    rows=[training_identity('spar',i,'same_scene_id') for i in (1,12,20)]
+    assert len({r['id'] for r in rows})==3
+    assert all(r['source_id']=='same_scene_id' for r in rows)
+    assert rows[1]['source_index']==12
+    assert rows[1]==training_identity('spar',12,'same_scene_id')
+    assert rows[1]['id']!=training_identity('hound',12,'same_scene_id')['id']
 
 
 def test_revsi_numeric_and_parser():

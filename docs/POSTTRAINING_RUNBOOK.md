@@ -1,5 +1,7 @@
 # 后训练与几何方法：安装、真实验收和恢复
 
+Qwen3.5 的最新 batch 选择与 ReVSI/VSI 评测以 [协议 v2](BATCH_AND_EVAL_PROTOCOL.md) 为准；本页早期单卡估算和旧16-token评测 ETA 不适用于新评测。
+
 本页补充 [服务器指南](SERVER_RUNBOOK.md)。不是全量方法复现的完成声明。
 所有命令在 EurekaSI 仓库根目录执行；`ROOT` 指向用户分配的持久目录。
 运行前检查 GPU 占用和现有进程，同一阶段不可重复启动。失败换新 run 名，保留旧证据。
@@ -113,6 +115,8 @@ python3 scripts/training-eta.py --root "$ROOT"
 监督器顺序执行：数据完整性校验与标记渲染 → 等待四卡空闲 → micro-batch 1/2/4 独立测速 → 两步 DDP smoke → 正式一轮 SFT → 同协议 ReVSI 复测 → comparison.json。已完成阶段跳过，训练保留优化器 checkpoint 以续训。辅助诊断失败不直接中断主实验；没有通过数据/显存门禁则不强行训练。
 
 去除 ReVSI 场景交叉后的计划训练量为 297899 条，global batch 64，GA=64/(4×micro-batch)，约 4655 optimizer steps。冻结视觉部分，语言部分全参数训练，非 LoRA 正式训练。
+
+2026-09-20 修复：SPAR 发布清单的原始 ID 不唯一，234277 条中的 17067 条复用了已有 ID，同 ID 组内没有整条完全相同的记录。正式 manifest 改用 `dataset::row::源文件零基行号`（过滤前行号），保留 `source_id/source_index`；不按原始 ID 删除样本，不改变数据内容和顺序。重复检查仍保留。VERL 0.7 的图像 byte-dict 路径另有嵌套字典解析问题，诊断 parquet 改存共享文件系统中的原图绝对路径；仍待重新完成 GSPO 验收，不抢占正式四卡 SFT。
 
 `runs/diagnostic-sft-throughput-v1/eta.json` 按 1/2/3/8/32 帧各一个真实样本实测，预计四卡纯训练 **7–11 小时**；这是启动前粗估，未覆盖完整长度分布、数据加载和 DDP 开销。正式运行后 `live-eta.json` 用实际 step 速度更新，前 20 步标记 warming_up。相同协议 ReVSI 复测基于 baseline 耗时约 28 分钟计算时间，可预留 30–45 分钟。数据准备另算，不将“脚本已启动”等同于训练已启动。
 

@@ -1,5 +1,7 @@
 # Qwen3.5-2B 空间 SFT 的 ReVSI 受控评测
 
+2026-09-20：推理与 batch 选择契约更新至 [协议 v2](../../docs/BATCH_AND_EVAL_PROTOCOL.md)。旧多图/16-token 基线仅保留为格式异常诊断；新主比较使用匹配的原生视频与显式最终答案提取，另增加独立 VSI-Bench 测试。下面的原始协议是历史版本，不能与新成绩混表。
+
 问题：同一模型和 ReVSI 协议下，GeoThinker 选择的 SPAR/Hound 监督能否改善空间 QA？对照为原始权重与 SFT 权重。只支持离线 QA，不支持机器人控制或几何架构优势；使用 vanilla RGB Qwen，不称为 GeoThinker 架构复现。
 
 ## 固定协议

@@ -1,0 +1,8 @@
+{
+  "vsibench": {
+    "repo": "nyu-visionx/VSI-Bench", "kind": "dataset",
+    "revision": "bdcadb3fea447621a828a24911801faba3587c12",
+    "patterns": ["test*.parquet", "test.jsonl", "pruned_ids.txt", "*.zip", "README.md"],
+    "destination": "datasets/vsibench", "priority": 0
+  }
+}

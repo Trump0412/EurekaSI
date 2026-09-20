@@ -1,5 +1,7 @@
 # EurekaSI
 
+Current Qwen3.5 operation follows the [four-GPU batch and evaluation protocol](docs/BATCH_AND_EVAL_PROTOCOL.md): measured mixed-data throughput, checkpoint resume, native video, ground-truth-blind final-answer extraction and paired ReVSI/VSI-Bench scoring. Historical scores are not validated capability baselines.
+
 For the isolated Conda Qwen3.5-2B / ReVSI baseline → SPAR+Hound SFT → paired evaluation workflow, see [SERVER_RUNBOOK](docs/SERVER_RUNBOOK.md). Start with `bash scripts/start-qwen35-study.sh /persistent/your-root`; queued stages are not completed validation.
 
 v0.2.1 — development version; no formal release yet
@@ -10,7 +12,7 @@ The distribution is named `eurekasi`; both `eurekasi` and the compatible `spatia
 
 A shared research codebase for GeoWire, GeoBridge, GeoPSRO, and controlled studies of how spatial capabilities are acquired and transferred.
 
-The latest maintenance pass was a **static review only**: no environment installation, dataset/model downloads, training, inference, or runtime tests. See the [readiness review](docs/READINESS_REVIEW.md) for fixes and remaining gaps. Bundled test logs describe the original delivery, not the modified code. Run instructions target Linux/WSL2 and Python 3.12; native Windows training is not validated.
+The original maintenance pass was static-only. Subsequent Qwen3.5 server training, native-video smoke tests and targeted regressions are recorded in [VALIDATION](docs/VALIDATION.md); full paired benchmark results remain pending. See the [readiness review](docs/READINESS_REVIEW.md) for broader unverified capabilities. Run instructions target Linux/WSL2 and Python 3.12; native Windows training is not validated.
 
 Features include explicit visual manifests, resumable pinned downloads, data audits, SFT, GRPO/GSPO, on-policy distillation, privileged self-distillation, multi-model evaluation, synchronous data parallel training, frozen VGGT/DA3/Pi3 caches, a shared geometry fusion baseline, and a LIBERO evaluation contract.
 
