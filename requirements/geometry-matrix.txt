@@ -1,0 +1,7 @@
+# Install only into a copied, isolated Qwen3-VL training environment.
+# Do not use geometry-constraints.txt: it targets older standalone encoders.
+torch==2.7.1
+torchvision==0.22.1
+transformers==5.3.0
+numpy==1.26.4
+deepspeed==0.18.8

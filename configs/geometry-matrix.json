@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "purpose": "Public scientific contract; private deployment paths are supplied separately to run-geometry-matrix.py",
+  "reference": {
+    "repository": "https://github.com/Zhoues/RoboRefer",
+    "revision": "d97a995ad28376720a4c8beb64915c58ed16c844",
+    "scope": "Training-schedule and projector adaptation, not exact original-model reproduction"
+  },
+  "base_model": "Qwen/Qwen3-VL-2B-Instruct",
+  "base_revision": "89644892e4d85e24eaac8bacfd4f463576704203",
+  "geometry_model": "facebook/VGGT-1B",
+  "geometry_revision": "860abec7937da0a4c03c41d3c269c366e82abdf9",
+  "geometry_source_revision": "a288dd0f14786c93483e45524328726ab7b1b4ce",
+  "seed": 3407,
+  "data_seed": 3407,
+  "data": {
+    "spar_rows": 234149,
+    "hound_rows": 63750,
+    "total_rows": 297899,
+    "sampling": "one pass original manifest mixture per stage",
+    "frames": "all original ordered frames; no silent subsampling",
+    "manifest_policy": "exact independent snapshots of existing audited train/eval manifests"
+  },
+  "common": {
+    "context_limit": 16384,
+    "geometry_input_side": 448,
+    "geometry_feature_dim": 2048,
+    "geometry_dropout": 0.0,
+    "precision": "bf16",
+    "scheduler": "cosine",
+    "warmup_ratio": 0.03,
+    "weight_decay": 0.0,
+    "gradient_checkpointing": true,
+    "checkpoint_steps": 100,
+    "checkpoint_retention": 2,
+    "dataloader_workers": 4,
+    "loss_reduction": "sample_mean",
+    "throughput_policy": "balanced",
+    "microbatch_candidates": [1, 2, 4],
+    "selection": "fastest numerically accepted, long-sample-safe candidate; peak reserved below 92 percent capacity"
+  },
+  "stages": {
+    "align": {
+      "distributed_runtime": "ddp",
+      "epochs": 1,
+      "global_batch": 448,
+      "learning_rate": 0.001,
+      "trainable": ["geometry_interface"]
+    },
+    "sft": {
+      "distributed_runtime": "deepspeed_zero3",
+      "epochs": 1,
+      "global_batch": 384,
+      "learning_rate": 0.00002,
+      "trainable": ["language", "native_visual", "native_visual_interface", "geometry_interface"],
+      "vggt_trainable": "per arm",
+      "initialization": "this arm's complete alignment checkpoint"
+    }
+  },
+  "arms": [
+    {"name": "downsample-trainable", "adapter": "downsample", "train_vggt": true},
+    {"name": "query64-trainable", "adapter": "query64", "train_vggt": true},
+    {"name": "downsample-frozen", "adapter": "downsample", "train_vggt": false}
+  ],
+  "preserved_baseline": {
+    "adapter": "query64",
+    "train_vggt": false,
+    "train_native_visual": false,
+    "alignment": false,
+    "epochs": 1,
+    "global_batch": 64,
+    "learning_rate": 0.00001,
+    "geometry_dropout": 0.2,
+    "policy": "preserve running code/configuration; multi-factor engineering comparison only"
+  },
+  "evaluation": {
+    "benchmarks": ["revsi", "vsibench"],
+    "protocol": "native32video-tagged512-greedy",
+    "max_image_side": 448,
+    "format_gate_parse_min": 0.9,
+    "format_gate_truncation_max": 0.05,
+    "outputs": ["per_sample", "per_task", "strict", "extracted", "parse_rate", "truncation_rate"]
+  },
+  "fairness_limits": [
+    "query64 versus downsample changes token count, parameter count, layout and compute",
+    "new arms versus preserved baseline change multiple training factors and data exposure",
+    "single seed is not a statistical significance claim",
+    "sample_mean and runtime implementation are explicit adaptations, not verified official numerical parity"
+  ]
+}
