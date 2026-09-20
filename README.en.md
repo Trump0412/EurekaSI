@@ -1,6 +1,6 @@
 # EurekaSI
 
-Opt-in multimodal bucketing, within-step rank balancing, explicit DeltaNet backends and gated throughput experiments are documented in [THROUGHPUT_OPTIMIZATION](docs/THROUGHPUT_OPTIMIZATION.md). Four-GPU speedup remains pending measurement; active research runs are not modified automatically.
+Opt-in multimodal bucketing, within-step rank balancing, explicit DeltaNet backends and gated throughput experiments are documented in [THROUGHPUT_OPTIMIZATION](docs/THROUGHPUT_OPTIMIZATION.md). Two fixed-sample runs on four A100 40GB GPUs measured a 7.42% median throughput gain with micro-batch 1 balancing; this is not a downstream accuracy claim. See the [acceptance report](docs/THROUGHPUT_ACCEPTANCE_2026-09-20.md). The original research SFT was stopped at the user's request; checkpoint 600 remains preserved.
 
 Current Qwen3.5 operation follows the [four-GPU batch and evaluation protocol](docs/BATCH_AND_EVAL_PROTOCOL.md): measured mixed-data throughput, checkpoint resume, native video, ground-truth-blind final-answer extraction and paired ReVSI/VSI-Bench scoring. Historical scores are not validated capability baselines.
 

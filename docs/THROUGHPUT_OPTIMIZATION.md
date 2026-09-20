@@ -1,6 +1,6 @@
 # 多模态 SFT 吞吐优化：实现、对照与验收
 
-日期：2026-09-20。状态：实现与初步验证完成；四卡端到端对照已部署排队，尚无正式加速倍数。
+日期：2026-09-20。验收与发现见 [验收报告](THROUGHPUT_ACCEPTANCE_2026-09-20.md)。原 SFT 已按用户要求停止；checkpoint-600 保留。当前主验收固定既有 auto 后端和 micro1，只改变有效 batch 内排布。
 
 ## 决策与边界
 
@@ -17,9 +17,11 @@
 | `spatial_intelligence/qwen35.py` | 可选 sample-mean completion loss；旧默认 token-mean 不变 |
 | `spatial_intelligence/study.py` | 可选训练参数、恢复契约与 kernel inventory |
 | `scripts/verify-delta-kernels.py` | bf16 算子输出/梯度检查 |
-| `scripts/verify-throughput-model.py` | 真实1/2/32图样本的整模型 loss/全部有效参数梯度检查 |
+| `scripts/verify-throughput-model.py` | 真实1/2/3/32图样本的整模型检查；schedule-only 使用64条样本的顺序敏感性检查 |
 | `scripts/benchmark-ddp-batches.py` | 四卡吞吐、有效 token、padding、显存、数据等待与真实算子路径 |
 | `scripts/tune-throughput.py` | 等待现有 study、数值门、正反序两轮消融、推荐配置 |
+| `scripts/verify-throughput-resume.py` | 固定总预算的连续/中断恢复对照，不重启研究 SFT |
+| `scripts/summarize-throughput.py` | 白名单导出公开数字，排除机器路径和原始日志 |
 
 分桶成本代理为 `256 × 图像数量 + ceil((问题字符数+答案字符数)/4)`，**不是精确 token 数**。它只指导排布，不过滤、裁剪或修改任何样本。真实 padding/token 指标从实际 processor 输出计算，不用代理值冒充。
 
@@ -41,7 +43,9 @@
 
 算子检查长度127/256/513，真实 GPU 上输出 relative L2 为0.00527–0.00544，五种输入梯度的 relative L2 最大0.00668，无非有限数。预先阈值为输出2%、梯度5%；已通过。第一次 Triton 编译约97秒，**这些含编译的单次耗时不是训练加速倍数**。
 
-整模型门使用相同 checkpoint、真实图像、相同目标，比较 reference micro1、reference micro2、FLA micro1；loss 相对误差<1%、全梯度 relative L2<5% 且有限。任意门失败停止扩大，不自动换配置。
+整模型门固定 loss 相对误差<1%、全梯度 relative L2<5% 且有限。实际验收中，FLA/reference 切换及 auto micro2/4 未达到梯度门槛，因此未作为通过验收的优化。现有 auto 本身已使用 FLA；不能把旧 warning 当成全回退证据。
+
+`--schedule-only` 专门验收固定后端/micro1 的排布变化：64条真实样本正序/反序累积，loss相同、梯度relative L2约2.18%，通过预设门槛。更大 batch 即使测速更快，也不能绕过它自己的数值门。
 
 ## 自动四卡实验
 
@@ -49,18 +53,20 @@
 export ROOT=/persistent/your-root
 cd "$ROOT/EurekaSI"
 python3 scripts/tune-throughput.py --root "$ROOT" \
-  --output "$ROOT/runs/throughput-ablation-v1" --detach
+  --checkpoint "$ROOT/runs/sft-spar234k-hound64k/checkpoint-600" \
+  --output "$ROOT/runs/throughput-acceptance-new" --schedule-only --detach
 ```
 
 等待 `state/study.lock` 释放，最多48小时，不中断训练或其正式评测。拿到锁后仍核对四卡空闲，其他任务占卡则报错，不抢卡。默认用当前 SFT 的 final 权重；可用 `--checkpoint` 明确指定完整现有权重。诊断权重不保存为研究模型。
 
-固定 seed3407、768条真实混合训练样本、global batch64、12步（3步预热+9步计时），外加64条长样本压力测试。保存逐条 ID 与原 manifest 内容。7组配置正序、反序各跑一遍：
+替换为实际完整 checkpoint，不保证其他服务器存在 step600。固定 seed3407、768条真实混合训练样本、global batch64、12步（3步预热+9步计时），外加64条长样本压力测试。保存逐条 ID 与原 manifest 内容。schedule-only 模式下5组配置正序、反序各跑一遍：
 
 - auto / legacy / micro1：工程基线；
-- reference / legacy / micro1、micro2；
-- reference / balanced / micro2；
-- FLA / legacy / micro1；
-- FLA / balanced / micro2、micro4。
+- auto / balanced / micro1：保持单样本计算，均衡 rank 工作量；
+- auto / legacy / micro2：诊断，不通过数值门则不参与推荐；
+- auto / balanced / micro2、micro4：诊断，不通过数值门则不参与推荐。
+
+不带 schedule-only 的完整模式保留后端对照；当前其严格数值门未通过，不推荐用它跳过已知失败。
 
 所有测速采用 sample_mean。每候选15分钟、整套运行预算60分钟（终止宽限除外）；OOM/超时终止候选进程组并保留日志。只有完成两次、长样本也通过、峰值 reserved<92%显存的候选才参与选择。
 
@@ -70,15 +76,28 @@ python3 scripts/tune-throughput.py --root "$ROOT" \
 
 ## 使用通过验收的配置
 
-以下仅示范参数，必须以实际 recommendation 为准，不代表当前推荐 micro2：
+本次两轮四卡受控测试接受以下配置：中位10.814→11.617 samples/s，提升7.42%；峰值 reserved 约23.48 GiB/卡。其他机器、数据组成或软件版本须重新验收，不外推为整轮训练加速保证。
 
 ```bash
 "$ROOT/envs/qwen35/bin/python" -m torch.distributed.run --standalone --nproc_per_node=4 \
   -m spatial_intelligence.study train --root "$ROOT" --name sft-throughput-validated \
-  --batch-size 2 --ga 8 --throughput-policy balanced \
-  --delta-backend fla --loss-reduction sample_mean
+  --batch-size 1 --ga 16 --throughput-policy balanced \
+  --delta-backend auto --loss-reduction sample_mean
 ```
 
-写入 `throughput-contract.json` 和 `kernel-inventory.json`。恢复时必须匹配契约，拒绝把新 sampler/loss/kernel 静默塞入旧无版本 checkpoint；本轮已在训练的基线保持原配置完成。正式采用前还应做一小段新配置训练与保存/恢复验证，不能只凭算子测试宣布全流程已验收。
+写入 `throughput-contract.json` 和 `kernel-inventory.json`。恢复时必须匹配契约，拒绝把新 sampler/loss/kernel 静默塞入旧无版本 checkpoint；原研究训练已按用户要求停止，不称为完成。`--processor` 可以明确指定仅含权重的源 checkpoint 所需的 processor。
 
-本次使用实验设计 skill 将“可能更快”拆成数值、样本集合、真实四卡吞吐三道门。尚未测出整模型/四卡结果时，不承诺加速倍数或新的训练 ETA。
+保存/恢复验收使用已安装 torch 的训练环境：
+
+```bash
+"$ROOT/envs/qwen35/bin/python" scripts/verify-throughput-resume.py \
+  --root "$ROOT" --suite "$ROOT/runs/throughput-acceptance-new" \
+  --checkpoint "$ROOT/runs/sft-spar234k-hound64k/checkpoint-600" \
+  --output "$ROOT/runs/throughput-resume-new" --detach
+```
+
+它在数值门通过、吞吐队列释放锁后运行192条真实样本、固定三步预算的连续/中断恢复对照。共享盘锁采用有界非阻塞重试，避免阻塞式 NFS 锁等待超时。底层 `--stop-after-steps` 和 `--diagnostic-manifest` 仅允许用于最多五步的 diagnostic 运行，不能意外缩短正式训练。比较最终模型、scheduler、步数并记录 optimizer 状态差异；不是只检查 checkpoint 文件存在。
+
+若两条独立运行在中断前就出现数值差异，使用新输出目录，并加 `--branch-source "$ROOT/runs/diagnostic-<已有连续运行>"`：复制同一个 checkpoint-2 的模型/optimizer/RNG/scheduler 与训练契约，仅重跑最后一步，对比源连续运行的 checkpoint-3。原证据保留；不能把独立运行差异直接归咎于恢复，也不能因为存在 bf16 差异就放宽门槛。
+
+本次使用实验设计 skill 将“可能更快”拆成数值、样本集合、真实四卡吞吐三道门。batch2/4 的速度诊断保留，但未通过整模型数值门，不推荐自动切换；原 SFT 已停止，不给它编造新的完成 ETA。

@@ -64,3 +64,13 @@ def test_sample_mean_loss_matches_accumulated_examples():
     batch=completion_loss(model,{'input_ids':ids,'labels':labels},reduction='sample_mean')[0]
     actual=torch.autograd.grad(batch,model.weight)[0]
     torch.testing.assert_close(batch,each);torch.testing.assert_close(actual,expected)
+
+
+def test_controlled_stop_is_diagnostic_only():
+    pytest.importorskip('torch');pytest.importorskip('transformers')
+    from pathlib import Path
+    from spatial_intelligence.study import train
+    with pytest.raises(ValueError,match='requires --diagnostic'):
+        train(Path('missing'),'unused','formal',stop_after_steps=2)
+    with pytest.raises(ValueError,match='strictly inside'):
+        train(Path('missing'),'unused','diagnostic-test',diagnostic=True,max_steps=3,stop_after_steps=3)

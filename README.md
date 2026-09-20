@@ -12,7 +12,7 @@
 
 ## 四步开始
 
-可变长多模态训练的有效 batch 内分桶、rank 均衡、FLA 数值门和自动吞吐对照见 [吞吐优化](docs/THROUGHPUT_OPTIMIZATION.md)。当前为可选功能；四卡加速倍数待实测。
+可变长多模态训练的有效 batch 内分桶、rank 均衡、FLA 数值门和自动吞吐对照见 [吞吐优化](docs/THROUGHPUT_OPTIMIZATION.md)。4×A100 40GB 固定样本两轮实测：micro1 均衡排布中位吞吐提升7.42%；仍为可选功能，不代表下游分数提升。详见 [验收报告](docs/THROUGHPUT_ACCEPTANCE_2026-09-20.md)。
 
 Qwen3.5 当前四卡测速、断点恢复与 ReVSI/VSI-Bench 最终答案提取采用 [batch 与评测协议 v2](docs/BATCH_AND_EVAL_PROTOCOL.md)。原始输出、解析结果和逐题指标都保留；不要将历史 image-only/16-token 分数当作已验证基线。
 

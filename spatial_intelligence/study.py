@@ -391,7 +391,8 @@ def prepare_probe(root):
 
 
 def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
-          throughput_policy='legacy',delta_backend_name='auto',loss_reduction='token_mean'):
+          throughput_policy='legacy',delta_backend_name='auto',loss_reduction='token_mean',
+          diagnostic_manifest=None,stop_after_steps=None,processor_path=None):
     import torch
     from transformers import AutoProcessor,Trainer,TrainingArguments,TrainerCallback
     from transformers.trainer_utils import get_last_checkpoint
@@ -400,13 +401,26 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
         raise ValueError('Balanced scheduling requires explicit sample_mean loss to preserve example weighting')
     if diagnostic and (not name.startswith('diagnostic-') or not 1<=max_steps<=5):
         raise ValueError('Probe is limited to 1..5 steps in a diagnostic-* run, never a research checkpoint')
-    gate=json.loads((root/('receipts/train-probe-prepared.json' if diagnostic else 'receipts/train-prepared.json')).read_text())
-    if gate['status']!='complete' or (not diagnostic and gate['scene_overlap']!=0):raise ValueError('Data gate failed')
-    rows=read_rows(root/('manifests/sft-probe.train.jsonl' if diagnostic else 'manifests/sft.train.jsonl'))
+    if (diagnostic_manifest or stop_after_steps is not None) and not diagnostic:
+        raise ValueError('Controlled interruption/custom probe requires --diagnostic')
+    if stop_after_steps is not None and not 0<stop_after_steps<max_steps:
+        raise ValueError('Stop step must be strictly inside the unchanged diagnostic budget')
+    gate=json.loads((root/('receipts/train-probe-prepared.json' if diagnostic and not diagnostic_manifest else 'receipts/train-prepared.json')).read_text())
+    if gate['status']!='complete' or ((not diagnostic or diagnostic_manifest) and gate['scene_overlap']!=0):raise ValueError('Data gate failed')
+    rows=read_rows(Path(diagnostic_manifest) if diagnostic_manifest else root/('manifests/sft-probe.train.jsonl' if diagnostic else 'manifests/sft.train.jsonl'))
+    if diagnostic_manifest:
+        if not 1<=len(rows)<=256:raise ValueError('Diagnostic manifest limited to 256 rows')
+        source={r['id']:r for r in read_rows(root/'manifests/sft.train.jsonl')}
+        if len({r['id'] for r in rows})!=len(rows) or any(source.get(r['id'])!=r for r in rows):
+            raise ValueError('Diagnostic rows must be unique, unchanged prepared training samples')
     class Rows(torch.utils.data.Dataset):
         def __len__(self):return len(rows)
         def __getitem__(self,i):return rows[i]
     class Telemetry(TrainerCallback):
+        def on_step_end(self,args,state,control,**kwargs):
+            if stop_after_steps is not None and state.global_step>=stop_after_steps:
+                control.should_save=True;control.should_training_stop=True
+            return control
         def on_train_begin(self,args,state,control,**kwargs):
             self.started=time.monotonic();self.start_step=state.global_step
         def on_log(self,args,state,control,logs=None,**kwargs):
@@ -420,7 +434,10 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
                 dump(Path(args.output_dir)/'live-eta.json',report)
                 print(json.dumps(report),flush=True)
     out=root/'runs'/name
-    proc=AutoProcessor.from_pretrained(model_path)
+    # Fused modules may allocate during construction, before Trainer places
+    # the model. Avoid every rank creating its initial CUDA context on GPU0.
+    if torch.cuda.is_available():torch.cuda.set_device(int(os.environ.get('LOCAL_RANK','0')))
+    proc=AutoProcessor.from_pretrained(processor_path or model_path)
     if delta_backend_name=='auto':model=load_model(model_path,training=True)
     else:
         from .throughput import delta_backend
@@ -453,12 +470,17 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
         except importlib.metadata.PackageNotFoundError:versions[package]=None
     contract={'layout':throughput_policy,'delta_backend':delta_backend_name,'loss_reduction':loss_reduction,
               'scheduler_version':'within-step-balanced-v1','packages':versions,
+              'processor':str(processor_path or model_path),
+              'diagnostic_sample_ids':[r['id'] for r in rows] if diagnostic_manifest else None,
               'micro_batch':batch_size,'ga':ga,'world_size':args.world_size,'seed':args.data_seed}
     contract_path=out/'throughput-contract.json'
     if contract_path.exists() and json.loads(contract_path.read_text())!=contract:
         raise ValueError('Resume throughput contract changed; use an explicitly audited migration/new run')
     if last and not contract_path.exists() and (throughput_policy!='legacy' or delta_backend_name!='auto' or loss_reduction!='token_mean'):
         raise ValueError('Do not silently change an unversioned checkpoint training contract')
+    # Every rank must finish inspecting the fresh directory before rank 0
+    # creates metadata; otherwise slower ranks can mistake it for an old run.
+    if torch.distributed.is_initialized():torch.distributed.barrier()
     if trainer.is_world_process_zero():
         from .throughput import kernel_inventory
         dump(contract_path,contract);dump(out/'kernel-inventory.json',kernel_inventory(model))
@@ -466,7 +488,7 @@ def train(root,model_path,name,batch_size=1,ga=16,max_steps=-1,diagnostic=False,
     trainer.save_model(str(out/'final'))
     if trainer.is_world_process_zero():
         proc.save_pretrained(out/'final')
-        dump(out/'completion.json',{'status':'complete','steps':trainer.state.global_step,'rows':len(rows),
+        dump(out/'completion.json',{'status':'paused_diagnostic' if stop_after_steps is not None and trainer.state.global_step<max_steps else 'complete','steps':trainer.state.global_step,'rows':len(rows),
                                    'checkpoint':str(out/'final'),'freeze_vision':True,'epochs':trainer.state.epoch,
                                    'diagnostic_only':diagnostic,'resumed_from':last})
 
@@ -515,6 +537,8 @@ def main():
     p.add_argument('--throughput-policy',choices=['legacy','balanced'],default='legacy')
     p.add_argument('--delta-backend',choices=['auto','reference','fla'],default='auto')
     p.add_argument('--loss-reduction',choices=['token_mean','sample_mean'],default='token_mean')
+    p.add_argument('--diagnostic-manifest');p.add_argument('--stop-after-steps',type=int)
+    p.add_argument('--processor',help='Explicit processor when source checkpoint contains weights only')
     a=p.parse_args();root=Path(a.root).resolve();model=a.model or str(root/'models/Qwen3.5-2B')
     if a.mode=='prepare-revsi':prepare_revsi(root)
     elif a.mode=='prepare-train':prepare_train(root)
@@ -524,7 +548,7 @@ def main():
     elif a.mode=='eval':evaluate(root,model,a.name,a.batch_size,a.limit)
     elif a.mode=='merge-eval':merge_eval(root,a.name)
     elif a.mode=='train':train(root,model,a.name,a.batch_size,a.ga,a.max_steps,a.diagnostic,
-                             a.throughput_policy,a.delta_backend,a.loss_reduction)
+                             a.throughput_policy,a.delta_backend,a.loss_reduction,a.diagnostic_manifest,a.stop_after_steps,a.processor)
 
 
 if __name__=='__main__':main()

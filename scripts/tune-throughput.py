@@ -25,6 +25,7 @@ def dump(path,value):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True);p.add_argument('--checkpoint',type=Path)
+    p.add_argument('--schedule-only',action='store_true',help='Accept only micro1 scheduling; larger batches remain diagnostic')
     p.add_argument('--detach',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     if a.detach:
         with (a.output/'supervisor.log').open('ab') as log:
@@ -75,11 +76,13 @@ def main():
         return code==0
     parity=a.output/'model-parity.json'
     gate=run('model-parity',[py,str(REPO/'scripts/verify-throughput-model.py'),'--root',str(a.root),
-        '--checkpoint',str(checkpoint),'--samples',str(a.output/'samples.jsonl'),'--output',str(parity)])
+        '--checkpoint',str(checkpoint),'--samples',str(a.output/'samples.jsonl'),'--output',str(parity)]+(['--schedule-only'] if a.schedule_only else []))
     if not gate:
         dump(a.output/'status.json',{'status':'blocked_numerical_gate','evidence':str(parity)});return
-    variants=[('auto','legacy',1),('reference','legacy',1),('reference','legacy',2),('reference','balanced',2),
-              ('fla','legacy',1),('fla','balanced',2),('fla','balanced',4)]
+    variants=[('auto','legacy',1),('auto','legacy',2),('auto','balanced',2),('auto','balanced',4),
+              ('reference','legacy',1),('reference','legacy',2),('reference','balanced',2)]
+    if a.schedule_only:
+        variants=[('auto','legacy',1),('auto','balanced',1),('auto','legacy',2),('auto','balanced',2),('auto','balanced',4)]
     results={}
     for repeat in (0,1):
         for backend,layout,micro in variants if repeat==0 else reversed(variants):
@@ -93,12 +96,15 @@ def main():
     qualified={k:v for k,v in results.items() if len(v)==2 and all(x['peak_reserved_gib']<.92*x['gpu_total_gib'] for x in v)}
     base=qualified.get('auto-legacy-b1')
     if not base:raise RuntimeError('Missing repeated safe baseline; no recommendation')
+    eligible={(x['backend'],x['micro_batch']) for x in json.loads(parity.read_text())['eligible_variants']}
+    qualified={k:v for k,v in qualified.items() if (v[0]['backend'],v[0]['micro_batch']) in eligible}
     speed=lambda values:statistics.median(x['samples_per_second'] for x in values)
     best=max(qualified,key=lambda k:speed(qualified[k]));gain=speed(qualified[best])/speed(base)
     # Require both repeats to beat the fastest baseline repeat, not one lucky median.
     accepted=gain>=1.05 and min(x['samples_per_second'] for x in qualified[best])>max(x['samples_per_second'] for x in base)
-    chosen=qualified[best if accepted else 'auto-legacy-b1'][0]
-    dump(a.output/'recommendation.json',{'status':'complete','recommended_key':best if accepted else 'auto-legacy-b1',
+    fallback='auto-legacy-b1' if 'auto-legacy-b1' in qualified else 'reference-legacy-b1'
+    chosen=qualified[best if accepted else fallback][0]
+    dump(a.output/'recommendation.json',{'status':'complete','recommended_key':best if accepted else fallback,
         'speed_ratio':gain,'promotion_threshold':1.05,'accepted':accepted,'automatically_changed_formal_training':False,
         'training_options':{'throughput_policy':chosen['layout'],'delta_backend':chosen['backend'],
                             'batch_size':chosen['micro_batch'],'ga':chosen['ga'],'loss_reduction':'sample_mean'},
@@ -111,5 +117,7 @@ if __name__=='__main__':
     except Exception as exc:
         if '--output' in sys.argv:
             out=Path(sys.argv[sys.argv.index('--output')+1])
-            if out.is_dir():dump(out/'failure.json',{'status':'failed','error':repr(exc),'time':time.time(),'pid':os.getpid()})
+            if out.is_dir():
+                failure={'status':'failed','error':repr(exc),'time':time.time(),'pid':os.getpid()}
+                dump(out/'failure.json',failure);dump(out/'status.json',failure)
         raise

@@ -94,6 +94,15 @@ GeoWire 原 tests 29 通过；GeoPSRO 原 tests 10 通过；GeoBridge HGB 与 St
 
 ## 下一道真实验收门槛
 
+### 2026-09-20 用户停止 SFT 后的吞吐验收
+
+- 此条更新取代下方历史“排队/待测”状态：原研究 SFT 及旧后续队列已停止，保留完整 checkpoint-600，不自动重启，也不称为完成一轮。
+- 832条固定训练输入（768条混合样本+64条长样本压力测试），五组配置各正反顺序测两次。micro1/GA16/global64 的 balanced 中位吞吐为11.617 samples/s，legacy为10.814，提升7.42%；峰值 reserved 约23.48 GiB/卡。
+- 64条真实样本累积顺序检查的 loss 相同、梯度 relative L2 为2.18%，通过预设5%门槛。batch2/4 及显式 FLA/reference 切换未通过各自整模型数值门，不自动推广。现有 auto 已使用 FLA，不能把通用 warning 解释成全回退。
+- 最终相关回归：48 passed、1 skipped；本地静态/发布检查通过。初轮服务器完整测试143 passed、1 skipped、1 failed，唯一失败是既有 GeoBridge catalog/lock 不一致，不能声称全仓库全绿。
+- 真实三步连续/中断恢复已完成。独立运行对照未通过1e-5参数门；排除中断前差异后，同checkpoint-2分叉的模型参数relative L2为7.22e-6，通过该门，scheduler和步数一致。但optimizer relative L2仍约5.02%，不能宣称逐位或严格确定性恢复。原失败证据保留。
+- 完整协议、负结果、恢复验收和代码入口见 [吞吐验收报告](THROUGHPUT_ACCEPTANCE_2026-09-20.md)。本次未重跑完整 ReVSI/VSI，不把吞吐增益当作准确率提升。
+
 ### 2026-09-20 可选吞吐优化
 
 - 实现有效 batch 内分桶/分配均衡、显式 DeltaNet 后端、sample-mean loss、恢复契约与真实 padding/token 吞吐统计；默认训练行为不变。详见 [吞吐优化](THROUGHPUT_OPTIMIZATION.md)。
