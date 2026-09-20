@@ -15,6 +15,21 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 
+def update_probe_candidate(name, parameter, group):
+    """Probe useful weights, not BF16 unit scales whose small updates round away."""
+    if group not in name or not parameter.requires_grad:
+        return False
+    if any(x in name for x in ('embed_tokens', 'lm_head', 'null_tokens', 'mask_token')):
+        return False
+    if group == 'geometry_backbone' and 'qkv.weight' not in name:
+        return False
+    # A partitioned matrix can have a one-dimensional or empty local shard.
+    shape = getattr(parameter, 'ds_shape', parameter.shape)
+    if group == 'geometry_adapter' and len(shape) < 2:
+        return False
+    return True
+
+
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, required=True)
@@ -240,9 +255,7 @@ def train(a):
             for group in ('geometry_adapter','geometry_backbone','model.visual','model.language_model'):
                 if self.group_updates.get(group): continue
                 for name,p in model.named_parameters():
-                    if group not in name or not p.requires_grad: continue
-                    if any(x in name for x in ('embed_tokens','lm_head','null_tokens','mask_token')): continue
-                    if group=='geometry_backbone' and 'qkv.weight' not in name: continue
+                    if not update_probe_candidate(name,p,group): continue
                     size=getattr(p,'ds_numel',p.numel())
                     if size<1: continue
                     indices=torch.linspace(0,size-1,min(1024,size),device=p.device).long()
@@ -286,9 +299,7 @@ def train(a):
             for group in ('geometry_adapter','geometry_backbone','model.visual','model.language_model'):
                 if self.group_updates.get(group): continue
                 for name, parameter in model.named_parameters():
-                    if group not in name or not parameter.requires_grad: continue
-                    if any(x in name for x in ('embed_tokens','lm_head','null_tokens')): continue
-                    if group=='geometry_backbone' and 'qkv.weight' not in name: continue
+                    if not update_probe_candidate(name,parameter,group): continue
                     if hasattr(parameter,'ds_id'):
                         from deepspeed.utils import safe_get_full_grad
                         gradient=safe_get_full_grad(parameter)
