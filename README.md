@@ -76,6 +76,8 @@ spatial run inference --model qwen3-vl-2b --name base-vsi --eval vsibench.test
 
 Qwen3-VL + VGGT 的两阶段融合对照使用 [Geometry Matrix 操作手册](docs/GEOMETRY_MATRIX_RUNBOOK.md)、[公开实验配置](configs/geometry-matrix.json)和[验收记录](docs/GEOMETRY_MATRIX_VALIDATION.md)。由一个协调者管理跨节点实验，各节点仅管理分配给自己的队列；保留既有任务和不可变代码快照，已启动计划的改动使用新版本。真实服务器映射与连接信息不进入公共仓库。该流程是 RoboRefer 训练策略的适配实验，不是原论文的完整复现。
 
+完整几何 SFT 之后的 GSPO 数据对照见 [Geometry RFT 操作手册](docs/GEOMETRY_RFT_RUNBOOK.md)：同一初始化、逻辑 group=8、相同 prompt 预算，比较动态视频数据与多帧空间混合数据。数据解码、来源隔离、真实参数更新和保存重载是自动开训前置检查；排队不等于已经通过 GPU 验收。
+
 [快速操作](docs/QUICKSTART.md) · [完整教程](docs/TUTORIAL.md) · [数据构建](docs/DATA.md) · [GPU 与 batch](docs/DISTRIBUTED.md) · [兼容性](docs/COMPATIBILITY.md) · [几何与融合](docs/GEOMETRY.md) · [具身迁移](docs/TRANSFER.md) · [代码审查](docs/AUDIT.md) · [AAAI 方法审查](docs/AAAI_REVIEW.md) · [CVPR 研究设计](docs/CVPR_RESEARCH.md) · [模型与数据资源](docs/RESOURCES.md) · [贡献指南](CONTRIBUTING.md) · [验证记录](docs/VALIDATION.md)
 
 新公共代码采用限定范围的 MIT 许可；原工程与第三方资产保留各自条款，见 [NOTICE](NOTICE.md)。仓库没有上传到 GitHub，也没有修改三个上游仓库；补丁已经在交付快照中应用，`spatial source` 会将它们应用到指定版本的本地 checkout。

@@ -30,6 +30,17 @@ def update_probe_candidate(name, parameter, group):
     return True
 
 
+def update_probe_indices(size, count=1024, device=None):
+    """Exact int64 coordinates: FP32 linspace can round size-1 out of bounds."""
+    import torch
+    if size < 1 or count < 1:
+        raise ValueError('Probe size and count must be positive')
+    count=min(size,count)
+    if count==1:
+        return torch.zeros(1,dtype=torch.long,device=device)
+    return torch.arange(count,dtype=torch.long,device=device)*(size-1)//(count-1)
+
+
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, required=True)
@@ -258,7 +269,7 @@ def train(a):
                     if not update_probe_candidate(name,p,group): continue
                     size=getattr(p,'ds_numel',p.numel())
                     if size<1: continue
-                    indices=torch.linspace(0,size-1,min(1024,size),device=p.device).long()
+                    indices=update_probe_indices(size,1024,p.device)
                     self.step_probes.append((group,p,indices,self.master_values(p,indices)))
                     break
         @staticmethod

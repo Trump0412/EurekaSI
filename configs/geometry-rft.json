@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "scope": "Paired custom HF geometry reference RFT; not an official RoboRefer or VERL reproduction",
+  "backend": "hf_geometry_reference",
+  "initialization": "Same predeclared formal downsample-trainable SFT checkpoint for both arms; never selected using test scores",
+  "group_size": 8,
+  "global_prompt_batch": 16,
+  "reference_passes": 2,
+  "budget_rule": "updates=ceil(2*accepted_train_rows/16); prompt_budget=16*updates for both arms",
+  "seed": 3407,
+  "training": {
+    "learning_rate": 0.000001,
+    "kl_beta": 0.02,
+    "clip_low": 0.0003,
+    "clip_high": 0.0004,
+    "max_new_tokens": 512,
+    "max_context": 16384,
+    "save_every": 25,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "lora_rank": 64,
+    "lora_alpha": 128,
+    "lora_dropout": 0.0,
+    "scheduler": "constant",
+    "geometry_modules_to_save_dtype": "float32",
+    "freeze_native_rgb": true,
+    "freeze_vggt": true,
+    "reward": {
+      "version": "structured-spatial-qa-v1",
+      "tau": 3,
+      "structure_weight": 0.5,
+      "words_weight": 0.05
+    }
+  },
+  "arms": {
+    "mixed": {"four_d_rl_fraction": 0.7, "spatial_fraction": 0.3},
+    "four_d_only": {"four_d_rl_fraction": 1.0, "spatial_fraction": 0.0}
+  },
+  "sampling": {
+    "method": "Fixed deterministic source allocation in blocks of ten prompt draws; deterministic sampling with replacement within source",
+    "tail": "Record exact source counts for the final partial block",
+    "control_budget": "Same total prompt draws and optimizer updates, not a smaller control-specific epoch count"
+  },
+  "rollout": {
+    "logical_responses_per_prompt": 8,
+    "generation_microbatch_candidates": [1, 2, 4, 8],
+    "preserve_group_on_oom": true,
+    "response_length_and_sampling": "512-token cap, temperature0.7, top_p0.9; both arms identical"
+  },
+  "trainable_scope": "Language LoRA plus declared geometry modules_to_save; freeze the reference and preserve the exact SFT geometry initialization",
+  "optimizer_and_reward": "Custom reference worker objective and source-specific verified rewards; not official RoboRefer reward parity",
+  "acceptance": [
+    "real image and geometry preserved",
+    "all eight actual responses generated per prompt",
+    "nonconstant within-group rewards",
+    "initial policy and reference parity",
+    "finite nonzero optimizer update",
+    "optimizer/scheduler/RNG checkpoint recovery",
+    "saved policy reload and identical paired evaluation IDs"
+  ],
+  "evaluation": {
+    "selection": "Fixed manifests and final checkpoints, no test-based checkpoint or SFT-source selection",
+    "comparisons": ["SFT initialization", "mixed RFT", "4D-only RFT"],
+    "required_outputs": ["raw predictions", "per-task DSR exact accuracy", "Spatial numeric graded reward", "parse/truncation rate", "source reward statistics", "rollout tokens", "GPU-hours"]
+  },
+  "upstream": {
+    "paper": "https://arxiv.org/html/2506.04308v4#A4.SS4",
+    "verified_reference": "RoboRefer appendix D.4 reports two epochs, one prompt per GPU and eight sampled outputs with GRPO",
+    "code_status": "Pinned public RoboRefer repository exposes SFT scripts; RFT scripts remain described as coming soon",
+    "limitations": "Different model, geometry, datasets, global prompt batch, trainable scope, rewards and runtime; group size and two-pass budget are selected references, not complete method parity"
+  }
+}
