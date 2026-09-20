@@ -40,6 +40,13 @@ and their comparison limits are defined in [the matrix runbook](GEOMETRY_MATRIX_
    a saved tensor was represented by an empty parameter partition. Alignment
    now uses DDP; trainable joint SFT retains ZeRO-3. This is an explicit runtime
    adaptation, not a change to data, global batch, learning rate or epoch count.
+6. Probing only the downsample adapter's first LayerNorm unit scale produced a
+   false negative: its small bf16 updates rounded away while other weights
+   changed. A checkpoint audit found all 18,432 and 6,144 entries of two
+   initially zero LayerNorm bias vectors finite and nonzero. The update probe
+   now selects matrix weights, respecting original shapes of ZeRO shards.
+   Three focused regression tests passed. Earlier diagnostic receipts are
+   retained, not retrospectively marked accepted; revised queues rerun gates.
 
 A fresh four-GPU DDP alignment diagnostic on 128 fixed real samples (1,093
 frames) completed two updates, with finite losses 3.3893 and 3.4393 and interface
@@ -76,5 +83,11 @@ evaluation and overhead. This is one warmed update, not a selected final ETA.
 The much slower joint stage must not inherit the alignment-only estimate.
 Larger microbatches and alternative distributed runtimes require their own
 timing, long-sample memory and checkpoint acceptance before adoption.
+
+An eight-GPU downsample DDP alignment diagnostic measured 2,240 samples in
+222.68 seconds across five post-warmup updates (about 10.06 samples/s), giving
+an alignment-only microbatch-1 estimate of 8.23 hours. Observed device memory
+was approximately 13.2–13.8 GiB per rank. This is still not the final batch
+selection, and the revised update-probe gate must pass in its own run.
 
 Private deployment mappings, machine paths and raw logs remain outside Git.
