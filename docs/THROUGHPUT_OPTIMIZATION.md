@@ -76,6 +76,25 @@ python3 scripts/tune-throughput.py --root "$ROOT" \
 
 ## 使用通过验收的配置
 
+### 基础设施定位与多 batch 使用
+
+本功能保留为 EurekaSI 的可复用、显式启用的训练基础设施，不是一次性实验补丁。支持长度分组、有效 batch 内 rank 均衡、样本等权 loss、吞吐测量与恢复契约。当前接入并实测的是 `spatial_intelligence.study` 的 Qwen3.5 路径，不代表所有模型或其他训练入口已自动启用。
+
+原训练器本来就支持 micro-batch>1；本优化的价值是减少可变长输入带来的无效计算和负载不均，而不是首次提供多样本 batch。四卡保持 global batch64 时，可选配对为 micro1/GA16、micro2/GA8、micro4/GA4。增加 micro 时须同步调整 GA，不能无意改变有效 batch。
+
+例如，以下是**显式选择的 micro2 实验配方**，不是通过全部数值检查的默认推荐。先按上文测量真实数据吞吐、检查显存与数值，再决定是否启动；使用新运行名，不向旧 checkpoint 静默更换训练契约：
+
+```bash
+"$ROOT/envs/qwen35/bin/python" -m torch.distributed.run --standalone --nproc_per_node=4 \
+  -m spatial_intelligence.study train --root "$ROOT" --name sft-balanced-micro2-new \
+  --batch-size 2 --ga 8 --throughput-policy balanced \
+  --delta-backend auto --loss-reduction sample_mean
+```
+
+本次 micro2 balanced 的中位吞吐为14.533 samples/s，高于 micro1 balanced 的11.617，但 micro2 的梯度检查未通过本次预设工程门。该门不是业界统一的质量标准，未通过也不是准确率下降的证据；保留功能供显式实验使用，不修改自动推荐门槛，不声称多 batch 必然更快或下游效果等价。默认训练参数不变，提交/更新仓库本身不会启动训练。
+
+### 已通过本次数值与吞吐门的 micro1 配方
+
 本次两轮四卡受控测试接受以下配置：中位10.814→11.617 samples/s，提升7.42%；峰值 reserved 约23.48 GiB/卡。其他机器、数据组成或软件版本须重新验收，不外推为整轮训练加速保证。
 
 ```bash
