@@ -227,6 +227,11 @@ def snapshot(plan, source=REPO):
         return target
     for folder in ("manifests", "receipts"):
         for src in (inputs / folder).glob("*.json*"):
+            # Diagnostics belong to the destination's stage/global-batch contract.
+            # A previous run can be an input root, but its generated profiles
+            # must not become immutable inputs to a different training recipe.
+            if src.name.startswith("diagnostic-"):
+                continue
             destination = root / folder / src.name
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists() and destination.read_bytes() != src.read_bytes():

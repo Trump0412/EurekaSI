@@ -128,6 +128,25 @@ class GeometryMatrixTests(unittest.TestCase):
             queue.snapshot(value, source)
             self.assertEqual((base / "study/manifests/sft.train.jsonl").read_text(), "original")
 
+    def test_snapshot_excludes_source_diagnostics_for_new_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); source = base / "repo"; inputs = base / "inputs"
+            for folder in ("scripts", "spatial_intelligence", "configs", "catalog"):
+                (source / folder).mkdir(parents=True)
+            for folder in ("manifests", "receipts"):
+                (inputs / folder).mkdir(parents=True)
+                (inputs / folder / "diagnostic-sft-mixed.jsonl").write_text("old batch384")
+            manifest = inputs / "manifests/sft.train.jsonl"
+            manifest.write_text("".join(json.dumps(dict(id=i, media=['frame'],question='q',answer='a'))+'\n' for i in range(2304)))
+            value = plan(); value.update(root=str(base / "study"),input_root=str(inputs),sft_global_batch=64)
+            queue.snapshot(value,source)
+            out = base / "study"
+            self.assertEqual((out / "manifests/sft.train.jsonl").read_bytes(),manifest.read_bytes())
+            self.assertFalse((out / "manifests/diagnostic-sft-mixed.jsonl").exists())
+            self.assertFalse((out / "receipts/diagnostic-sft-mixed.jsonl").exists())
+            mixed,_ = queue.diagnostic_manifests(out,'sft',4,6,64)
+            self.assertEqual(len(mixed.read_text().splitlines()),384)
+
     def test_dependency_terminal_and_gpu_release(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"

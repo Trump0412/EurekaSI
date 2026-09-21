@@ -53,6 +53,15 @@ For 8 ranks, micro1/2/4 use GA8/4/2; for 4 ranks GA16/8/4.
 The runner's missing-option default remains384 for historical compatibility;
 new deployments must explicitly set64. RFT prompt batch16 and G8 are unchanged.
 
+Snapshot migration fix: when a previous study is the input root, copy formal
+manifests but exclude generated `diagnostic-*` manifests and receipts. A six-step
+global384 profile has2304 rows, whereas global64 has384; inheriting the former
+correctly triggers `Diagnostic sample identity changed` and prevents training.
+For a failed-before-training destination, preserve the failure evidence and move
+inherited diagnostics into a recovery archive before regeneration and an explicit
+retry. Do not relax identity checks, delete formal data, or import old profile
+results as acceptance of the new batch. Keep active worker snapshots immutable.
+
 Pinned official source: `Zhoues/RoboRefer@d97a995ad28376720a4c8beb64915c58ed16c844`.
 
 | Setting | Alignment | SFT |
