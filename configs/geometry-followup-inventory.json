@@ -1,0 +1,10 @@
+{
+  "provenance":"Public HF revision API with blobs=true; exact revisions are in geometry-followup-assets.json; no private credentials",
+  "mindcube":[{"file":"README.md","size":2474},{"file":"data.zip","size":643961690}],
+  "site":[{"file":"README.md","size":570},{"file":"data_chunked_01.zip","size":4803535257},{"file":"data_chunked_02.zip","size":5272809089},{"file":"data_chunked_03.zip","size":4719468175},{"file":"data_chunked_04.zip","size":2537415691},{"file":"data_chunked_05.zip","size":4932075016},{"file":"data_chunked_06.zip","size":3663247715},{"file":"data_chunked_07.zip","size":3750253773},{"file":"data_chunked_08.zip","size":4721170650},{"file":"data_chunked_09.zip","size":3956822496},{"file":"data_chunked_10.zip","size":4793859626},{"file":"data_chunked_11.zip","size":5124096722},{"file":"data_chunked_12.zip","size":5319171204},{"file":"data_chunked_13.zip","size":5294211035},{"file":"data_chunked_14.zip","size":5250331614},{"file":"data_chunked_15.zip","size":876627491},{"file":"dataset.py","size":3452},{"file":"image_test.json","size":3031380},{"file":"video_test.json","size":1488281}],
+  "cvbench":[{"file":"README.md","size":6136},{"file":"test_2d.jsonl","size":820585},{"file":"test_2d.parquet","size":184906137},{"file":"test_3d.jsonl","size":1069448},{"file":"test_3d.parquet","size":219902227}],
+  "pi3_weights":[{"file":"README.md","size":6939},{"file":"config.json","size":54},{"file":"model.safetensors","size":3834909248}],
+  "viewspatial":[{"file":"README.md","size":8057},{"file":"ViewSpatial-Bench.json","size":3012217},{"file":"scannetv2_val.zip","size":947797937},{"file":"val2017.zip","size":563406002}],
+  "openspatial_probe":[{"file":"README.md","size":4074},{"file":"data/000001.parquet","size":6331306},{"file":"data/000002.parquet","size":24941863}],
+  "mmsi":[{"file":"MMSI_Bench.parquet","size":704672176},{"file":"README.md","size":6319}]
+}

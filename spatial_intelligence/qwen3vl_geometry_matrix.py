@@ -165,6 +165,11 @@ class Qwen3VLGeometryMatrix(Qwen3VLForConditionalGeneration):
                 video_grid_thw=None, mm_token_type_ids=None, cache_position=None, labels=None,
                 logits_to_keep=0, use_cache=None, geometry_images=None, geometry_positions=None,
                 geometry_force_null=None, **kwargs):
+        threshold=getattr(self,'alignment_checkpoint_threshold',0)
+        if threshold and self.training:
+            from .alignment_checkpoint_policy import apply_alignment_checkpoint_policy
+            width=input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
+            apply_alignment_checkpoint_policy(self,width,threshold)
         prefill = past_key_values is None or past_key_values.get_seq_length() == 0
         handle = None
         if prefill:
@@ -172,8 +177,9 @@ class Qwen3VLGeometryMatrix(Qwen3VLForConditionalGeneration):
                 raise ValueError('Geometry checkpoint requires real images and explicit slots')
             images = [geometry_images] if isinstance(geometry_images, torch.Tensor) and geometry_images.ndim == 4 else geometry_images
             geometries = []
-            for image in images:
-                feat = self.geometry_backbone(image)
+            encoder_batch=getattr(self,'geometry_encoder_batch_size',1)
+            features=self.geometry_backbone.forward_batch(images,max_batch=encoder_batch)
+            for feat in features:
                 geometries.append(self.geometry_adapter(feat.unsqueeze(0))[0])
             if len(geometries) != geometry_positions.shape[0]:
                 raise ValueError('Geometry batch mismatch')

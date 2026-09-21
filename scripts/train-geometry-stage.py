@@ -54,6 +54,8 @@ def arguments():
     p.add_argument('--profile', action='store_true'); p.add_argument('--deepspeed')
     p.add_argument('--verify-reload', action='store_true')
     p.add_argument('--parity', action='store_true', help='Disposable full-gradient micro1 versus micro2/4 comparison')
+    p.add_argument('--encoder-batch-size',type=int,default=1,help='Opt-in equal-length frozen VGGT batch size')
+    p.add_argument('--alignment-checkpoint-threshold',type=int,default=0,help='Opt-in no language recompute for short alignment inputs; requires separate runtime profiling')
     p.add_argument('--evaluate', action='store_true')
     p.add_argument('--benchmark', choices=['revsi', 'vsibench'])
     p.add_argument('--smoke-per-type', type=int, default=0); p.add_argument('--merge', action='store_true')
@@ -79,6 +81,8 @@ def parity(a):
     originals={r['id']:r for r in read_rows(a.root/'manifests/sft.train.jsonl')}
     if any(originals.get(r['id'])!=r for r in rows): raise ValueError('Changed diagnostic examples')
     model=load_matrix_model(a.model,a.vggt_source,a.vggt_weights,a.adapter,a.stage,a.train_vggt).cuda()
+    model.geometry_encoder_batch_size=a.encoder_batch_size
+    model.alignment_checkpoint_threshold=a.alignment_checkpoint_threshold
     collator=MatrixCollator(AutoProcessor.from_pretrained(a.processor),a.vggt_source,a.adapter)
     losses=[]; reference={}; numerator=denominator=0.
     for micro in (1,a.micro):
@@ -203,6 +207,12 @@ def train(a):
     out.mkdir(parents=True, exist_ok=True)
     processor = AutoProcessor.from_pretrained(a.processor)
     model = load_matrix_model(a.model, a.vggt_source, a.vggt_weights, a.adapter, a.stage, a.train_vggt)
+    if a.encoder_batch_size<1 or a.alignment_checkpoint_threshold<0:
+        raise ValueError('Invalid throughput policy')
+    if a.alignment_checkpoint_threshold and a.stage!='align':
+        raise ValueError('Adaptive alignment checkpointing cannot be applied to SFT')
+    model.geometry_encoder_batch_size=a.encoder_batch_size
+    model.alignment_checkpoint_threshold=a.alignment_checkpoint_threshold
     ga = a.global_batch // (world*a.micro)
     # Frozen language weights still participate in activation recomputation.
     # ZeRO-3 partitions those nontrainable weights outside recompute hooks in
@@ -216,6 +226,9 @@ def train(a):
         weight_decay=0., dropout=0., warmup=.03, deepspeed=effective_deepspeed,
         sharding='zero3' if effective_deepspeed else 'ddp',
         diagnostic=a.profile, max_steps=a.max_steps, version=1)
+    if a.encoder_batch_size!=1 or a.alignment_checkpoint_threshold:
+        contract['throughput_policy']=dict(encoder_batch_size=a.encoder_batch_size,
+            alignment_checkpoint_threshold=a.alignment_checkpoint_threshold)
     path = out/'contract.json'
     if path.exists() and json.loads(path.read_text()) != contract: raise ValueError('Resume contract mismatch')
     last = get_last_checkpoint(str(out))

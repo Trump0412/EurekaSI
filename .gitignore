@@ -35,3 +35,16 @@ wandb/
 *.pt
 *.pth
 *.bin
+# Private infrastructure configuration and runtime evidence (never publish)
+/.private/
+/.ssh/
+/logs/
+/state/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+# User-provided private research manuscript
+/9585_Geometry_Augmented_Post_T.pdf
+/9586_Geometry_Routes_Visual_Se.pdf
+/9600_Geometry_Finds_Its_Place_.pdf

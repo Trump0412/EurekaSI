@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "status": "planned_after_geofits_not_installed",
+  "requires": ["previous_paper_complete", "georoute_all_complete", "geofits_all_complete"],
+  "model_roles": ["released_base", "matched_full_parameter_rgb_sft", "georoute_final", "geofits_final"],
+  "checkpoint_rule": "Predeclared final checkpoints; no test-based selection",
+  "task_groups": [
+    {"name": "visual_retention", "priority": 0, "tasks": ["cvbench", "blink", "ai2d", "ocrbench", "chartqa"],
+     "requires": ["pinned_official_task", "licensed_media", "registered_geometry_loader", "per_task_prompt_and_scorer_parity"]},
+    {"name": "driving_transfer", "priority": 1, "tasks": ["drivelm_public_validation", "drivebench_clean_corruption_textonly"],
+     "requires": ["nuscenes_media_license", "public_labels", "camera_order", "official_metric_dependencies"],
+     "claim_limit": "Offline understanding, not closed-loop driving safety"},
+    {"name": "embodied_offline", "priority": 1, "tasks": ["embspatial"],
+     "requires": ["official_egocentric_protocol", "licensed_media", "answer_adapter"],
+     "claim_limit": "Spatial QA, not action success"},
+    {"name": "physical_prediction", "priority": 2, "tasks": ["physion_v15_readout"],
+     "requires": ["observed_prefix_only", "target_object_identity", "separate_readout_training_split"],
+     "claim_limit": "Physical prediction/readout, not generative world-model evaluation"},
+    {"name": "embodied_closed_loop", "priority": 3, "tasks": ["embodiedbench_environment_pilot"],
+     "requires": ["independent_simulator_env", "real_headless_render", "action_interface", "fixed_interaction_budget"],
+     "claim_limit": "Only accepted actual environment trajectories count"}
+  ],
+  "external_judge_policy": "No automatic paid API calls; unimplemented official judged components remain not_run",
+  "metrics": ["per_task_before_after_delta", "correct_to_wrong", "wrong_to_correct", "parse_rate", "truncation_rate", "source_group_paired_intervals"],
+  "aggregate_policy": "No arbitrary cross-domain scalar average",
+  "installation_policy": "Independent Conda profiles; never mutate active training environments"
+}

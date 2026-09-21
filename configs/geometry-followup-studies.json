@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "status": "user_authorized_queue_pending_data_and_runtime_acceptance",
+  "launch_policy": {"auto_start": true, "user_authorized": true, "requires_data_and_runtime_acceptance": true},
+  "data_selection": "shared-five-source-arkitscenes100k-v2",
+  "openspatial": {"source_field": "data_source", "source_value": "arkitscenes", "selected_records": 100000, "category_quotas": null, "manifest_verified": false, "scene_mapping_verified": false},
+  "order": ["previous_paper_training_and_evaluation", "georoute", "geofits"],
+  "model": "Qwen/Qwen3-VL-2B-Instruct",
+  "model_revision": "89644892e4d85e24eaac8bacfd4f463576704203",
+  "initialization": "Each new study starts from the released base, not the previous paper RFT checkpoint",
+  "use_lora": false,
+  "full_parameter_sft": ["language", "native_visual", "native_mergers", "new_method_modules"],
+  "external_teachers": {"VGGT": "frozen", "Pi3": "frozen"},
+  "training": {
+    "epochs": 1, "global_batch": 64, "learning_rate": 0.00001,
+    "warmup_ratio": 0.03, "scheduler": "cosine", "weight_decay": 0.0,
+    "seed": 3407, "dtype": "bfloat16", "loss_reduction": "sample_mean",
+    "micro_candidates": [1, 2, 4], "gradient_checkpointing": true,
+    "sft_distributed": "deepspeed_zero3", "checkpoint_steps": 100,
+    "selection": "Fastest measured safe candidate; full-data semantics unchanged"
+  },
+  "inputs": {
+    "mode": "ordered_independent_images", "max_actual_frames": 32,
+    "short_sequences": "Keep actual images; no duplication or invented FPS",
+    "image_canvas": "448-square aspect-preserving letterbox",
+    "context": 16384, "frame_selection": "Locked media manifest, no runtime subsampling",
+    "geofits_grid": "Same letterbox field of view resized to392 for patch14 teachers; Qwen448/patch16"
+  },
+  "georoute": {
+    "architecture": {"exits": [5, 11, 17, 23], "bottleneck": 256, "alpha_init": 0.0,
+      "blocks_per_exit": 2, "active_exits": [0, 1, 2, 3], "placement": "pre"},
+    "graph": {"side": 448, "visibility_min": 0.5, "confidence_min": 0.5,
+      "topk": 8, "query_chunk": 128, "duplicate_rule": "maximum",
+      "anchors": "all actual source frames", "same_view_edges": false},
+    "tip": {"mask_fraction": 0.15, "lambda_sub": 0.1, "lambda_keep": 0.1,
+      "margin": 0.1, "loss": "MSE reconstruction plus wrong-support hinge plus unmasked MSE",
+      "bootstrap_passes": 1, "replay_every_instruction_optimizer_updates": 15},
+    "required_variants": ["full", "no_tip", "one_stb", "final_only", "post_merger"],
+    "baseline_policy": "Matched RGB SFT removed by user; historical RGB results are not a data-matched causal baseline",
+    "strength_protocol": {"alpha_init": 0.0, "learnable_alpha": true, "formal_multiplier": 1.0, "diagnostic_multipliers": [0.0, 0.5, 1.0, 2.0], "selection": "Validation only; shared protocol across five arms; never select on visual contrast or test score"}
+  },
+  "geofits": {
+    "vggt_levels": [11, 17, 23], "pi3_levels": [17, 26, 35],
+    "vggt_feature_width": 2048, "pi3_feature_width": 1024,
+    "fusion_layers_one_based": [1, 2, 3], "top_k": 2,
+    "temporal_bottleneck": 256, "retrieval_width": 256, "gate_bias": 0.0,
+    "temporal_group_size": 1, "pooling": "average_2x2",
+    "timestamp_rule": "Measured normalized sincos when available; otherwise explicitly order_only_sincos",
+    "required_variants": ["full", "3d_only", "4d_only", "dense", "no_gate", "single_layer"]
+  },
+  "evaluation": {
+    "primary": "vsibench", "benchmarks": ["vsibench", "revsi", "mmsi", "mindcube_tiny", "viewspatial", "site", "cvbench"],
+    "decode": {"greedy": true, "thinking": false, "max_new_tokens": 512},
+    "protocol": "Same image inputs and adapted output format for all local models, separate from published leaderboard values",
+    "scoring": "Pinned benchmark-specific official arithmetic, gold-blind extraction, per-task denominators",
+    "checkpoint_selection": "Fixed final checkpoint; never choose on test",
+    "uncertainty": "Paired bootstrap grouped by independent source scene/video where available; single seed limitation explicit"
+  },
+  "supplement_status": "Underspecified values are declared local choices, not claimed official hyperparameters",
+  "required_acceptance": ["five_source_manifest_and_media", "scene_overlap_audit", "actual_teacher_geometry_alignment",
+    "full_model_component_updates", "optimizer_rng_resume", "fresh_process_checkpoint_reload",
+    "generation_prefill_parity", "all_benchmark_adapters", "long_sample_memory", "matched_baseline_and_ablations"]
+}

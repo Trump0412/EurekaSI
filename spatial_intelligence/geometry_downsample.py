@@ -58,6 +58,12 @@ class DownsampleGeometryAdapter(nn.Module):
     def forward(self, features, padding=None, force_null=False):
         if features.ndim != 4 or features.shape[-1] != self.input_dim:
             raise ValueError('Expected geometry features [B,T,N,input_dim]')
+        # VGGT residual features can be FP32 even when its linear operations
+        # use BF16 autocast. ZeRO-3 casts this interface's parameters to BF16
+        # without supplying an outer autocast context. Establish the interface
+        # boundary explicitly; do not cast VGGT's FP32 normalization buffers.
+        # Tensor.to preserves the gradient path into a trainable VGGT trunk.
+        features = features.to(dtype=self.layers[0].weight.dtype)
         batch, frames, patches, _ = features.shape
         if padding is not None:
             if tuple(padding.shape) != (batch, frames, patches):

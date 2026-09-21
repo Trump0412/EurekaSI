@@ -18,9 +18,9 @@
     "save_every": 25,
     "temperature": 0.7,
     "top_p": 0.9,
-    "lora_rank": 64,
-    "lora_alpha": 128,
-    "lora_dropout": 0.0,
+    "policy_scope": "language_full_geometry",
+    "use_lora": false,
+    "optimizer_state_offload": "cpu",
     "scheduler": "constant",
     "geometry_modules_to_save_dtype": "float32",
     "freeze_native_rgb": true,
@@ -47,7 +47,7 @@
     "preserve_group_on_oom": true,
     "response_length_and_sampling": "512-token cap, temperature0.7, top_p0.9; both arms identical"
   },
-  "trainable_scope": "Language LoRA plus declared geometry modules_to_save; freeze the reference and preserve the exact SFT geometry initialization",
+  "trainable_scope": "All language parameters plus geometry adapter, no LoRA; native RGB and VGGT frozen. Separate immutable SFT reference required; actual memory/update/reload gate mandatory",
   "optimizer_and_reward": "Custom reference worker objective and source-specific verified rewards; not official RoboRefer reward parity",
   "acceptance": [
     "real image and geometry preserved",

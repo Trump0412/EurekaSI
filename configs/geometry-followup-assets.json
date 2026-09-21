@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "endpoint": "https://hf-mirror.com",
+  "inventory_file": "geometry-followup-inventory.json",
+  "selection": {
+    "name": "shared-five-source-arkitscenes100k-v2",
+    "seed": 3407,
+    "validation_source_scene_fraction": 0.01,
+    "max_real_frames": 32,
+    "short_sequence": "retain all original real frames; never duplicate or invent timestamps",
+    "sources": {
+      "spar": "existing exact SPAR234149 manifest with visual markers; exclude benchmark source groups",
+      "hound": "existing exact Hound63750 manifest; exclude benchmark source groups",
+      "vsi590k": "all released training annotations after source-group exclusion",
+      "vlm3r": "spatial and temporal; corrected camera-position labels; at most100000 canonical-order eligible rows",
+      "openspatial": "User-specified ARKitScenes-source 100000 instruction records; no category quotas; preserve supplied selected IDs if available, otherwise seed3407 selection after media/source-scene exclusions; never backfill from other sources"
+    },
+    "claim": "New locked implementation subset, not an asserted original-paper exact manifest"
+  },
+  "reuse": {
+    "spar_hound": ["manifests/sft.train.jsonl", "datasets/vg-llm/train/spar_234k.json", "datasets/vg-llm/train/llava_hound_64k.json"],
+    "vsi590k": ["datasets/vsi590k/vsi_590k.jsonl"],
+    "vlm3r": ["datasets/vlm3r-original/README.md"],
+    "vsi_eval": ["manifests/vsibench32.test.jsonl"],
+    "revsi_eval": ["manifests/revsi32.test.jsonl"]
+  },
+  "assets": {
+    "pi3_weights": {"kind":"model", "repo":"yyfz233/Pi3", "revision":"ae722e7039287d0c8fde9f11f197f804f44b510c", "license":"bsd-2-clause", "patterns":["model.safetensors","config.json","README.md"], "destination":"models/Pi3"},
+    "pi3_source": {"kind":"github", "repo":"yyfz/Pi3", "revision":"9fa3ddb3f8d53041f8b2738df404f62223bbaa7b", "license":"bsd-2-clause", "destination":"sources/Pi3"},
+    "mmsi": {"kind":"dataset", "repo":"RunsenXu/MMSI-Bench", "revision":"ec7c92bfaf7728fcca1d61e3e224e190af309436", "license":"cc-by-4.0", "patterns":["MMSI_Bench.parquet","README.md"], "destination":"datasets/mmsi"},
+    "viewspatial": {"kind":"dataset", "repo":"lidingm/ViewSpatial-Bench", "revision":"95d9ea3a94da7190bd19d2539ff661f93dba21dd", "license":"apache-2.0", "patterns":["ViewSpatial-Bench.json","*.zip","README.md"], "destination":"datasets/viewspatial"},
+    "mindcube": {"kind":"dataset", "repo":"MLL-Lab/MindCube", "revision":"9c941b46a6bd65b6914669ef7a579948fc9c8467", "license":"mit", "patterns":["data.zip","README.md"], "destination":"datasets/mindcube"},
+    "mindcube_source": {"kind":"github", "repo":"mll-lab-nu/MindCube", "revision":"b8b7062adf6d3e49d588a7d014a0a787553d09ec", "license":"mit", "destination":"sources/MindCube"},
+    "cvbench": {"kind":"dataset", "repo":"nyu-visionx/CV-Bench", "revision":"bc284db50d036958861cb60cdd7b77612052ce0d", "license":"apache-2.0", "patterns":["test_*.parquet","test_*.jsonl","README.md"], "destination":"datasets/cvbench"},
+    "site": {"kind":"dataset", "repo":"franky-veteran/SITE-Bench", "revision":"2f405b86266cd571b5f0032016b00a51f387aa57", "license":"cc-by-4.0", "patterns":["*.zip","image_test.json","video_test.json","dataset.py","README.md"], "destination":"datasets/site"},
+    "openspatial_probe": {"kind":"dataset", "repo":"jdopensource/JoyAI-Image-OpenSpatial", "revision":"9abfd33a80fa87230bbade5ae811616d980014c2", "license":"apache-2.0", "patterns":["README.md","data/000001.parquet","data/000002.parquet"], "destination":"datasets/openspatial-probe", "scope":"schema/media probe only; not100K training selection or full release"}
+  }
+}

@@ -97,6 +97,35 @@ class RegisteredVGGT(nn.Module):
             raise ValueError(f'Invalid VGGT final patch shape {tuple(result.shape)}')
         return result
 
+    def forward_batch(self, sequences, max_batch=1):
+        """Batch equal-length independent sequences along B, never along time.
+
+        Opt-in for frozen teachers only; trainable/stochastic VGGT keeps the
+        original serial path. Order is restored before downstream projection.
+        """
+        if not isinstance(max_batch,int) or isinstance(max_batch,bool) or max_batch<1:
+            raise ValueError('max_batch must be a positive integer')
+        if max_batch==1 or self.trainable:
+            return [self(image) for image in sequences]
+        groups={}; output=[None]*len(sequences)
+        for index,image in enumerate(sequences):
+            if image.ndim!=4 or tuple(image.shape[1:])!=(3,448,448) or image.shape[0]<1:
+                raise ValueError('Expected nonempty [T,3,448,448] sequences')
+            key=(tuple(image.shape),image.dtype,image.device)
+            groups.setdefault(key,[]).append(index)
+        for indices in groups.values():
+            for offset in range(0,len(indices),max_batch):
+                selected=indices[offset:offset+max_batch]
+                images=torch.stack([sequences[i] for i in selected])
+                precision=torch.autocast('cuda',dtype=torch.bfloat16) if images.device.type=='cuda' else nullcontext()
+                with torch.no_grad(),precision:
+                    layers,start=self.aggregator(images)
+                    features=layers[-1][:,:,start:]
+                if tuple(features.shape)!=(len(selected),images.shape[1],1024,2048):
+                    raise ValueError('Invalid batched VGGT final patch shape')
+                for position,index in enumerate(selected): output[index]=features[position]
+        return output
+
     def preprocess(self, paths):
         from vggt.utils.load_fn import load_and_preprocess_images_square
         return load_and_preprocess_images_square(paths, target_size=448)

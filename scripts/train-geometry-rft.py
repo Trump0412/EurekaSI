@@ -97,7 +97,8 @@ def run(plan, arm_name, mode):
     import torch.distributed as dist
     from transformers import AutoProcessor, set_seed
     from spatial_intelligence.geometry_rft import (load_policy,train_mode,prompt_inputs,to_device,
-        cached_geometry,sample_group,response_logps,frozen_inventory)
+        cached_geometry,sample_group,response_logps,frozen_inventory,policy_base,load_reference,
+        reference_context,save_policy,policy_checkpoint_name,CPUStateAdamW,FULL_SCOPE)
     from spatial_intelligence.geometry_rft_objective import group_standardized_advantages,gspo_loss
     from spatial_intelligence.geometry_rft_reward import score_response,RewardConfig
     rank=int(os.getenv('RANK','0')); local=int(os.getenv('LOCAL_RANK','0')); world=int(os.getenv('WORLD_SIZE','1'))
@@ -113,6 +114,11 @@ def run(plan, arm_name, mode):
     recipe=read(plan['scientific_config']) if plan.get('scientific_config') else {}
     cfg={**recipe.get('training',{}),**plan.get('training',{})}
     plan=dict(plan,lora_rank=int(cfg.get('lora_rank',64)),lora_alpha=int(cfg.get('lora_alpha',128)))
+    scope=cfg.get('policy_scope',plan.get('policy_scope','language_lora_geometry'))
+    plan.update(policy_scope=scope,use_lora=cfg.get('use_lora',plan.get('use_lora',scope!=FULL_SCOPE)))
+    offload=cfg.get('optimizer_state_offload','none')
+    if offload not in ('cpu','none'): raise ValueError('Unsupported optimizer offload implementation')
+    checkpoint_name=policy_checkpoint_name(plan)
     group=int(plan.get('group_size',8)); prompt_batch=int(plan['prompts_per_update'])
     if group!=8 or prompt_batch%world: raise ValueError('Keep G=8 and globally matched prompt batch')
     data=read(plan['data_receipt'])
@@ -124,6 +130,11 @@ def run(plan, arm_name, mode):
     if Path(sft['checkpoint']).resolve()!=Path(plan['model_checkpoint']).resolve():
         raise ValueError('SFT lineage mismatch')
     out=Path(plan['root'])/'runs'/arm_name/mode; out.mkdir(parents=True,exist_ok=True)
+    if scope==FULL_SCOPE and mode=='train':
+        gate=read(Path(plan['root'])/'runs'/arm_name/'gate'/'completion.json')
+        if (gate.get('status')!='complete' or not gate.get('reload_verified') or
+            gate.get('policy_scope')!=FULL_SCOPE or gate.get('optimizer_state_offload')!=offload):
+            raise ValueError('Full-language formal RFT requires its own accepted scope/offload runtime gate')
     datasets={k:rows(v) for k,v in plan.get('train_manifests',data['train_manifests']).items()}
     if not datasets.get('4drl') or (arm['spatial_fraction'] and not datasets.get('spatialladder')):
         raise ValueError('Empty declared training source')
@@ -139,7 +150,9 @@ def run(plan, arm_name, mode):
         'data_receipt':str(Path(plan['data_receipt']).resolve()),'group_size':group,
         'prompts_per_update':prompt_batch,'updates':target,'formal_updates':updates,
         'prompt_budget':target*prompt_batch,'world':world,'seed':seed,'training':cfg,
-        'reference_rows':reference_rows,'engine':'HF PEFT synchronous GSPO, not VERL',
+        'reference_rows':reference_rows,'engine':'HF synchronous GSPO, not VERL',
+        'policy_scope':scope,'optimizer_state_offload':offload,
+        'reference_implementation':'separate frozen SFT language/interface' if scope==FULL_SCOPE else 'PEFT disabled adapter',
         'sampling':'temperature .7 / top_p .9; surrogate uses untempered actor log probabilities',
         'sampling_limit':'truncated sampling differs from raw actor distribution; no exact behavior-density claim',
         'mode':mode,'base_checkpoint_identity':sft.get('checkpoint')}
@@ -150,8 +163,8 @@ def run(plan, arm_name, mode):
     completed=sorted((p for p in out.glob('checkpoint-*') if (p/'complete.json').exists()),
                      key=lambda p:int(p.name.split('-')[-1]))
     checkpoint=completed[-1] if completed else None
-    policy=load_policy(plan,checkpoint/'adapter' if checkpoint else None).cuda()
-    base=policy.get_base_model(); adapter=base.config.geometry_matrix['adapter']
+    policy=load_policy(plan,checkpoint/checkpoint_name if checkpoint else None,trainable=mode!='evaluate').cuda()
+    base=policy_base(policy); adapter=base.config.geometry_matrix['adapter']
     inventory=frozen_inventory(policy)
     if any(('geometry_backbone' in n or '.visual.' in n) for n in inventory['trainable']):
         raise ValueError('RFT must freeze native RGB and checkpoint-specific VGGT')
@@ -169,18 +182,22 @@ def run(plan, arm_name, mode):
         evaluate_pair(plan,arm_name,out,policy,processor,prepare,score,autocast,gather,barrier,rank,world)
         if world>1: dist.destroy_process_group()
         return
+    fixed_reference=load_reference(plan,policy)
+    if fixed_reference is not None: fixed_reference.cuda()
     parameters=[p for p in policy.parameters() if p.requires_grad]
-    optimizer=torch.optim.AdamW(parameters,lr=float(cfg.get('learning_rate',1e-6)),weight_decay=0.)
+    optimizer_class=CPUStateAdamW if offload=='cpu' else torch.optim.AdamW
+    optimizer=optimizer_class(parameters,lr=float(cfg.get('learning_rate',1e-6)),weight_decay=0.)
     # Constant LR is an explicit adaptation where the RFT schedule is unspecified.
     scheduler=torch.optim.lr_scheduler.LambdaLR(optimizer,lambda _:1.)
-    start=0; all_variation=0; components={'language_lora':False,'geometry_adapter':False}
+    language_component='language_full' if scope==FULL_SCOPE else 'language_lora'
+    start=0; all_variation=0; components={language_component:False,'geometry_adapter':False}
     if checkpoint:
         state=torch.load(checkpoint/'optimizer.pt',map_location='cpu',weights_only=False)
         optimizer.load_state_dict(state['optimizer']); scheduler.load_state_dict(state['scheduler'])
         start=state['step']; all_variation=state['within_group_reward_variation']; components=state['component_updates']
         for value in optimizer.state.values():
             for k,v in value.items():
-                if isinstance(v,torch.Tensor) and k!='step': value[k]=v.cuda()
+                if isinstance(v,torch.Tensor) and k!='step' and offload!='cpu': value[k]=v.cuda()
         rng=torch.load(checkpoint/f'rng-rank{rank}.pt',map_location='cpu',weights_only=False)
         torch.set_rng_state(rng['cpu']); torch.cuda.set_rng_state(rng['cuda']); random.setstate(rng['python'])
     else: set_seed(seed+rank)
@@ -190,7 +207,8 @@ def run(plan, arm_name, mode):
     if fixed_tokens.numel()==0: raise ValueError('Empty reference probe')
     policy.eval()
     with cached_geometry(policy,fixed_prompt),autocast(),torch.no_grad():
-        with policy.disable_adapter(): reference_initial=response_logps(policy,fixed_prompt,fixed_tokens).cpu()
+        with reference_context(policy,fixed_reference) as reference_model:
+            reference_initial=response_logps(reference_model,fixed_prompt,fixed_tokens).cpu()
         actor_initial=response_logps(policy,fixed_prompt,fixed_tokens).cpu()
     initial_parity=bool(torch.allclose(actor_initial,reference_initial,atol=.02,rtol=.01)) if not checkpoint else True
     if not initial_parity: raise ValueError('New actor differs from fixed SFT reference before training')
@@ -240,7 +258,8 @@ def run(plan, arm_name, mode):
         timings={'input':0.,'rollout_and_geometry':0.,'old_reference_logprob':0.,'backward':0.,'sync_optimizer':0.}
         source_stats={}
         probes={}
-        for group_name,pattern in [('language_lora','lora_B'),('geometry_adapter','geometry_adapter')]:
+        language_pattern='.language_model.layers.0.self_attn.q_proj.weight' if scope==FULL_SCOPE else 'lora_B'
+        for group_name,pattern in [(language_component,language_pattern),('geometry_adapter','geometry_adapter')]:
             for name,p in policy.named_parameters():
                 if pattern in name and p.requires_grad and p.ndim>=2:
                     indices=probe_indices(p.numel(),2048,local)
@@ -271,9 +290,9 @@ def run(plan, arm_name, mode):
                     with torch.no_grad():
                         for response in responses:
                             old.append(response_logps(policy,prompt,response['tokens']).detach())
-                        with policy.disable_adapter():
+                        with reference_context(policy,fixed_reference) as reference_model:
                             for response in responses:
-                                reference.append(response_logps(policy,prompt,response['tokens']).detach())
+                                reference.append(response_logps(reference_model,prompt,response['tokens']).detach())
                     torch.cuda.synchronize(); timings['old_reference_logprob']+=time.monotonic()-part
                     train_mode(policy)
                     part=time.monotonic()
@@ -325,7 +344,7 @@ def run(plan, arm_name, mode):
             torch.save({'cpu':torch.get_rng_state(),'cuda':torch.cuda.get_rng_state(),
                         'python':random.getstate()},checkpoint/f'rng-rank{rank}.pt')
             if rank==0:
-                policy.save_pretrained(checkpoint/'adapter'); processor.save_pretrained(checkpoint/'adapter')
+                save_policy(policy,checkpoint/checkpoint_name,plan); processor.save_pretrained(checkpoint/checkpoint_name)
                 torch.save({'optimizer':optimizer.state_dict(),'scheduler':scheduler.state_dict(),'step':step+1,
                     'within_group_reward_variation':all_variation,'component_updates':components,
                     'last_loss':last_loss,'last_grad':last_grad},checkpoint/'optimizer.pt')
@@ -337,12 +356,13 @@ def run(plan, arm_name, mode):
     policy.eval(); final_prompt=prepare(first_row)
     with cached_geometry(policy,final_prompt),autocast(),torch.no_grad():
         expected=response_logps(policy,final_prompt,fixed_tokens).cpu()
-        with policy.disable_adapter(): ref_after=response_logps(policy,final_prompt,fixed_tokens).cpu()
+        with reference_context(policy,fixed_reference) as reference_model:
+            ref_after=response_logps(reference_model,final_prompt,fixed_tokens).cpu()
     reference_fixed=bool(torch.allclose(reference_initial,ref_after,atol=.02,rtol=.01))
     if not reference_fixed: raise ValueError('Reference changed during policy training')
-    policy.cpu(); del optimizer,parameters,policy,base
+    policy.cpu(); del optimizer,parameters,policy,base,fixed_reference,reference_model
     torch.cuda.empty_cache(); barrier()
-    restored=load_policy(plan,checkpoint/'adapter',trainable=False).cuda()
+    restored=load_policy(plan,checkpoint/checkpoint_name,trainable=False).cuda()
     with cached_geometry(restored,final_prompt),autocast(),torch.no_grad():
         actual=response_logps(restored,final_prompt,fixed_tokens).cpu()
     delta=float((expected-actual).abs().max())
@@ -351,7 +371,8 @@ def run(plan, arm_name, mode):
                     'components':components})
     healthy=(all(x['reload_verified'] and x['reference_fixed'] and all(x['components'].values()) for x in reports)
              and all_variation>0 and (last_grad>0 or start==target))
-    receipt={'status':'complete' if healthy else 'failed','checkpoint':str(checkpoint/'adapter'),
+    receipt={'status':'complete' if healthy else 'failed','checkpoint':str(checkpoint/checkpoint_name),
+        'policy_scope':scope,'optimizer_state_offload':offload,
         'arm':arm_name,'mode':mode,
         'initial_checkpoint':plan['model_checkpoint'],'updates':target,'prompt_budget':target*prompt_batch,
         'group_size':8,'finite_loss':math.isfinite(last_loss),'nonzero_update':all(components.values()),

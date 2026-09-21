@@ -1,13 +1,129 @@
 """Geometry-preserving HF policy for GSPO; not a vLLM/VERL registration.
 
-The fixed SFT model is shared by actor/reference. Disabling PEFT restores both
-the original language weights and the original saved geometry interface.
+Legacy LoRA shares a fixed SFT model and disables PEFT for reference inference.
+Explicit full-language RFT instead loads separate immutable SFT language and
+interface weights. Only the frozen RGB/VGGT trunks may be shared in that mode.
 """
 from contextlib import contextmanager
 from pathlib import Path
 import json
 
 import torch
+
+
+FULL_SCOPE = 'language_full_geometry'
+
+
+def policy_base(policy):
+    return policy.get_base_model() if hasattr(policy, 'get_base_model') else policy
+
+
+def configure_full_policy(base):
+    """All language parameters and used interface parameters; no visual updates."""
+    if any('lora_' in name for name,_ in base.named_parameters()):
+        raise ValueError('Full-language RFT cannot contain LoRA')
+    base.requires_grad_(False)
+    base.model.language_model.requires_grad_(True)
+    base.lm_head.requires_grad_(True)
+    base.geometry_adapter.requires_grad_(True)
+    for name,p in base.named_parameters():
+        if 'null_tokens' in name: p.requires_grad_(False)
+        if p.requires_grad: p.data=p.data.float()
+    base._rft_policy_scope=FULL_SCOPE
+    return base
+
+
+def policy_checkpoint_name(plan):
+    return 'policy' if plan.get('policy_scope') == FULL_SCOPE else 'adapter'
+
+
+def save_policy(policy, path, plan):
+    path=Path(path);path.mkdir(parents=True,exist_ok=True)
+    if plan.get('policy_scope') != FULL_SCOPE:
+        policy.save_pretrained(path);return
+    state={n:p.detach().cpu() for n,p in policy.named_parameters() if p.requires_grad}
+    if not state or any('lora_' in n for n in state): raise ValueError('Invalid full-language checkpoint')
+    torch.save(state,path/'full_trainable.pt')
+    (path/'policy_scope.json').write_text(json.dumps(dict(scope=FULL_SCOPE,
+        initial_checkpoint=str(plan['model_checkpoint']),
+        frozen_modules=['native_rgb','checkpoint_specific_vggt'],format_version=1)),encoding='utf-8')
+
+
+def restore_full_policy(base, path, plan):
+    meta=json.loads((Path(path)/'policy_scope.json').read_text(encoding='utf-8'))
+    if meta.get('scope')!=FULL_SCOPE or Path(meta['initial_checkpoint']).resolve()!=Path(plan['model_checkpoint']).resolve():
+        raise ValueError('Full-policy scope or fixed SFT lineage mismatch')
+    policy=configure_full_policy(base)
+    saved=torch.load(Path(path)/'full_trainable.pt',map_location='cpu',weights_only=True)
+    actual={n:p for n,p in policy.named_parameters() if p.requires_grad}
+    if set(saved)!=set(actual): raise ValueError('Incomplete full-language/interface checkpoint')
+    with torch.no_grad():
+        for name,p in actual.items():
+            value=saved[name]
+            if value.dtype!=p.dtype or value.shape!=p.shape or not torch.isfinite(value).all():
+                raise ValueError('Full-policy shape/precision/value mismatch: '+name)
+            p.copy_(value)
+            if not torch.equal(p.cpu(),value): raise ValueError('Full-policy restore changed values')
+    return policy
+
+
+def load_reference(plan, policy):
+    """Separate immutable SFT language/interface; only frozen visual trunks shared."""
+    if plan.get('policy_scope') != FULL_SCOPE: return None
+    from .qwen3vl_geometry_matrix import load_matrix_model
+    from .qwen35_video_compat import install_video_rope_compat
+    reference=load_matrix_model(plan['model_checkpoint'],plan['vggt_source'],stage='eval')
+    install_video_rope_compat(reference)
+    base=policy_base(policy)
+    # Shared modules have no trainable state, no dropout and no optimizer owner.
+    reference.model.visual=base.model.visual
+    reference.geometry_backbone=base.geometry_backbone
+    reference.requires_grad_(False).eval()
+    if reference.model.language_model is base.model.language_model or reference.geometry_adapter is base.geometry_adapter:
+        raise ValueError('Full RFT reference must not share trainable actor parameters')
+    return reference
+
+
+@contextmanager
+def reference_context(policy, reference=None):
+    if getattr(policy_base(policy),'_rft_policy_scope',None)==FULL_SCOPE:
+        if reference is None or reference is policy or any(p.requires_grad for p in reference.parameters()):
+            raise ValueError('Full policy requires a distinct frozen SFT reference')
+        yield reference
+    else:
+        if reference is not None: raise ValueError('Unexpected separate legacy reference')
+        with policy.disable_adapter(): yield policy
+
+
+class CPUStateAdamW(torch.optim.AdamW):
+    """Explicit synchronous CPU FP32 master/moment offload, not ZeRO sharding.
+
+    Copies one full gradient/weight set per optimizer update. This trades CPU RAM
+    and PCIe traffic for GPU memory; actual throughput must pass a runtime gate.
+    """
+    def __init__(self, parameters, **kwargs):
+        self.device_parameters=list(parameters)
+        masters=[torch.nn.Parameter(p.detach().float().cpu().clone()) for p in self.device_parameters]
+        super().__init__(masters,**kwargs)
+        self.master_parameters=masters
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        if closure is not None: raise ValueError('CPU offload does not support optimizer closures')
+        for device,master in zip(self.device_parameters,self.master_parameters):
+            master.grad=None if device.grad is None else device.grad.detach().float().cpu()
+            device.grad=None
+        result=super().step()
+        for device,master in zip(self.device_parameters,self.master_parameters):
+            device.copy_(master.to(device=device.device,dtype=device.dtype))
+            master.grad=None
+        return result
+
+    def zero_grad(self,set_to_none=True):
+        super().zero_grad(set_to_none=set_to_none)
+        for parameter in self.device_parameters:
+            if set_to_none: parameter.grad=None
+            elif parameter.grad is not None: parameter.grad.zero_()
 
 
 STRUCTURED_INSTRUCTION = '''Reason from the supplied visual evidence. Do not invent timestamps or measurements.
@@ -77,7 +193,12 @@ def load_policy(plan, adapter_path=None, trainable=True):
     from .qwen3vl_geometry_matrix import load_matrix_model
     from .qwen35_video_compat import install_video_rope_compat
     base = load_matrix_model(plan['model_checkpoint'], plan['vggt_source'], stage='eval')
-    if adapter_path:
+    scope=plan.get('policy_scope','language_lora_geometry')
+    if scope not in ('language_lora_geometry',FULL_SCOPE): raise ValueError('Unknown RFT policy scope')
+    if scope==FULL_SCOPE:
+        if plan.get('use_lora') is not False: raise ValueError('Explicit use_lora=false required')
+        policy=restore_full_policy(base,adapter_path,plan) if adapter_path else configure_full_policy(base)
+    elif adapter_path:
         policy = restore_policy_adapter(base,adapter_path,trainable=trainable)
     else:
         policy = add_policy_adapter(base, plan.get('lora_rank',64), plan.get('lora_alpha',128))
@@ -92,7 +213,7 @@ def load_policy(plan, adapter_path=None, trainable=True):
 
 def train_mode(policy):
     policy.train()
-    base = policy.get_base_model()
+    base = policy_base(policy)
     base.model.visual.eval()
     base.geometry_backbone.eval()
 
@@ -206,7 +327,7 @@ def cached_geometry(policy, prompt):
     No persistent cross-checkpoint cache and no native RGB feature replacement.
     Identity is checked to prevent reuse for a different frame tensor.
     """
-    backbone=policy.get_base_model().geometry_backbone
+    backbone=policy_base(policy).geometry_backbone
     if any(p.requires_grad for p in backbone.parameters()):
         raise ValueError('Trainable VGGT cannot use the detached RFT feature cache')
     images=prompt['geometry_images']
