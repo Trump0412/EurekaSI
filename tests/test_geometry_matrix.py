@@ -22,6 +22,42 @@ def profile(micro=1, speed=4., peak=30.):
 
 
 class GeometryMatrixTests(unittest.TestCase):
+    def test_global64_changes_sft_commands_and_diagnostics_not_alignment(self):
+        p=plan();p['sft_global_batch']=64
+        queue.validate_plan(p)
+        sft=queue.worker_command(p,p['jobs'][0],'sft','/align','probe',2)
+        align=queue.worker_command(p,p['jobs'][0],'align','/base','probe',2)
+        self.assertEqual(sft[sft.index('--global-batch')+1],'64')
+        self.assertEqual(align[align.index('--global-batch')+1],'448')
+        self.assertEqual(64//(len(p['gpus'])*2),4)
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);(root/'manifests').mkdir()
+            rows=[dict(id=str(i),media=['x']*(i%3+1),question='q',answer='a') for i in range(2700)]
+            (root/'manifests/sft.train.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in rows))
+            mixed,pressure=queue.diagnostic_manifests(root,'sft',8,6,64)
+            self.assertEqual(len(mixed.read_text().splitlines()),384)
+            self.assertEqual(len(pressure.read_text().splitlines()),64)
+            align_mixed,_=queue.diagnostic_manifests(root,'align',8,6,64)
+            self.assertEqual(len(align_mixed.read_text().splitlines()),2688)
+        for invalid in (0,-1,True,64.5,65):
+            p['sft_global_batch']=invalid
+            with self.assertRaises(ValueError):queue.validate_plan(p)
+
+    def test_explicit_physical_memory_cap_does_not_reject_accepted_high_peak(self):
+        high=profile(2,8,37.8)
+        self.assertEqual(queue.select_profile([profile(1,5),high],8,384)['micro'],1)
+        self.assertEqual(queue.select_profile([profile(1,5),high],8,384,1.0)['micro'],2)
+        exact=profile(2,8,40)
+        self.assertEqual(queue.select_profile([exact],8,384,1.0)['micro'],2)
+        for change in ({'peak_reserved_gib':40.1},{'long_sample_passed':False},
+                       {'status':'failed'},{'samples_per_second':float('nan')}):
+            bad=dict(high,**change)
+            with self.assertRaises(RuntimeError):queue.select_profile([bad],8,384,1.0)
+        for invalid in (0,-1,1.01,float('nan'),float('inf'),True,'1'):
+            with self.assertRaises(ValueError):queue.select_profile([high],8,384,invalid)
+            p=plan();p['memory_limit_fraction']=invalid
+            with self.assertRaises(ValueError):queue.validate_plan(p)
+
     def test_encoder_throughput_options_are_explicit(self):
         p = plan(); p['encoder_batch_size'] = 4
         p['trainable_encoder_batching'] = True

@@ -37,7 +37,7 @@
     "loss_reduction": "sample_mean",
     "throughput_policy": "balanced",
     "microbatch_candidates": [1, 2, 4],
-    "selection": "fastest numerically accepted, long-sample-safe candidate; peak reserved below 92 percent capacity"
+    "selection": "fastest numerically accepted, long-sample-tested candidate; default peak reserved below 92 percent capacity, explicit private-plan memory_limit_fraction override allowed up to 1.0"
   },
   "stages": {
     "align": {
@@ -50,7 +50,9 @@
     "sft": {
       "distributed_runtime": "deepspeed_zero3",
       "epochs": 1,
-      "global_batch": 384,
+      "global_batch": 64,
+      "reference_global_batch": 384,
+      "batch_revision": "User-authorized full SFT restart from completed alignment; not optimizer resume",
       "learning_rate": 0.00002,
       "trainable": ["language", "native_visual", "native_visual_interface", "geometry_interface"],
       "vggt_trainable": "per arm",

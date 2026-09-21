@@ -40,6 +40,19 @@ query64 arm needs its own alignment because its interface is different.
 
 ## Official settings and deliberate differences
 
+2026-09-21 user-authorized revision: new formal SFT arms use **global batch64**
+via explicit private-plan `sft_global_batch: 64`. The table below preserves the
+original reference settings, not the revised SFT deployment. Completed alignment
+at global448 is retained read-only. SFT starts afresh from that alignment, not a
+global384 optimizer checkpoint. Historical diagnostics remain in their original
+roots; new profiles/selection receipts use global64 and cannot reuse global384
+throughput receipts as acceptance. Data, one epoch, LR2e-5, warmup ratio0.03 and
+cosine scheduling remain unchanged; total optimizer updates rise to about4655.
+The scheduler is constructed for the new total, not copied from an old run.
+For 8 ranks, micro1/2/4 use GA8/4/2; for 4 ranks GA16/8/4.
+The runner's missing-option default remains384 for historical compatibility;
+new deployments must explicitly set64. RFT prompt batch16 and G8 are unchanged.
+
 Pinned official source: `Zhoues/RoboRefer@d97a995ad28376720a4c8beb64915c58ed16c844`.
 
 | Setting | Alignment | SFT |
@@ -120,7 +133,11 @@ provided, is only a distribution-shift diagnostic.
   but revalidate on Qwen3-VL and trainable VGGT. The previous Qwen3.5 result does
   not validate this model; its DeltaNet optimization does not apply to Qwen3-VL.
 - Choose the fastest numerically accepted candidate with a long-sample forward,
-  backward and optimizer step and safe peak memory (under 92% capacity).
+  backward and optimizer step. The default memory gate is under 92% capacity;
+  explicit private-plan `memory_limit_fraction: 1.0` accepts measured peaks
+  within physical capacity when the user accepts reduced memory headroom.
+  This does not guarantee absence of future OOM, nor waive actual OOM,
+  finite-update, numerical-parity, long-sample or reload checks.
   Larger microbatch is not automatically faster. OOM candidates terminate only
   their own process groups and leave official checkpoints untouched.
 - Use sample-mean completion loss consistently when comparing microbatch sizes;
@@ -200,7 +217,8 @@ VGGT, native vision, and language parameters, and reloaded with zero maximum
 logit difference. Its maximum reserved memory was 13.38 GiB. This is an interface
 gate, **not** evidence of full-mixture acceleration or 32-frame safety. Each
 allocation still profiles micro1/2/4 on the locked mixture and long samples,
-checks reload/numerical gates, and selects the fastest candidate below 92% memory.
+checks reload/numerical gates, and selects the fastest candidate within the
+explicit memory policy (92% by default). Record the policy in selection receipts.
 
 `jobs[].resume_checkpoint` passes a full Trainer checkpoint to the SFT worker.
 Continuation requires optimizer and RNG states, identical manifest bytes/order,
@@ -225,7 +243,8 @@ SFT-running, evaluating, complete or blocked. Trainable-VGGT ETA is unknown unti
 real backward and optimizer timing are available. Use warmed measured samples/s,
 remaining rows, checkpoint overhead and evaluation seconds/example; separate
 queue wait, setup/profile, alignment, SFT and eval. Rough optimizer counts are
-665 alignment + 776 SFT per full-data arm; loader tail handling is recorded.
+665 alignment + 776 SFT at the reference batch384; revised batch64 SFT has
+about4655 updates. Loader tail handling is recorded.
 Do not infer ETA solely from optimizer count because batch and geometry cost differ.
 
 Keep final per-arm config, manifest identity, source versions, selected throughput

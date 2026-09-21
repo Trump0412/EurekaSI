@@ -51,4 +51,4 @@ GeoRoute：full、no_tip、one_stb、final_only、post_merger。GeoFits：full�
 
 全参数替代论文LoRA；GeoFits还解冻原论文冻结的native RGB。外部VGGT/Pi3冻结。共享1epoch/global64/LR1e-5/seed3407，最多32真实帧，独立image输入。精确子集、TIP步数/权重、图阈值及部分模块宽度为显式本地选择。它们是受控全参数改编，不是论文数字的严格复现。
 
-部署记录：followup v9 已替换旧等待器，依赖主RFT v6与奖励消融v2完成，再依次执行GeoRoute、GeoFits。每次更新创建不可变新版本，没有热改armed计划；旧等待器仅在确认尚未运行训练时停止。该状态表示排队生效，不代表正式训练已通过验收：数据、真实教师、全模型和补充benchmark验收未齐之前继续保留阶段门。
+部署记录：为衔接用户批准的global64 SFT，followup v10 已替换旧等待器，依赖主RFT v7与奖励消融v3完成，再依次执行GeoRoute、GeoFits。两组主RFT共同使用新global64 downsample-trainable SFT初始化；RFT自身prompt batch16、G8、奖励及采样预算没有改变。每次更新创建不可变新版本，没有热改armed计划；旧等待器仅在确认尚未运行训练时停止。该状态表示排队生效，不代表正式训练已通过验收：数据、真实教师、全模型和补充benchmark验收未齐之前继续保留阶段门。

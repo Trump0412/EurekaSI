@@ -35,6 +35,10 @@ def write(path, value):
 
 
 def validate_plan(plan):
+    validate_memory_limit(plan.get('memory_limit_fraction', .92))
+    sft_batch=plan.get('sft_global_batch',384)
+    if type(sft_batch) is not int or sft_batch < 1:
+        raise ValueError('sft_global_batch must be a positive integer')
     encoder_batch = plan.get('encoder_batch_size', 1)
     if type(encoder_batch) is not int or encoder_batch < 1:
         raise ValueError('encoder_batch_size must be a positive integer')
@@ -48,7 +52,7 @@ def validate_plan(plan):
     devices = plan.get("gpus", [])
     if not devices or len(devices) != len(set(devices)) or any(not str(x).isdigit() for x in devices):
         raise ValueError("gpus must be distinct device indices")
-    if any(batch % len(devices) for batch in (448, 384)):
+    if any(batch % len(devices) for batch in (448, sft_batch)):
         raise ValueError("World size must divide both official global batches")
     jobs = plan.get("jobs", [])
     names = [j.get("name") for j in jobs]
@@ -98,7 +102,14 @@ def dependency_ready(dependency, proc_root=Path("/proc")):
     return True
 
 
-def select_profile(profiles, world, global_batch):
+def validate_memory_limit(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 1:
+        raise ValueError('memory_limit_fraction must be finite and in (0, 1]')
+    return value
+
+
+def select_profile(profiles, world, global_batch, memory_limit_fraction=.92):
+    validate_memory_limit(memory_limit_fraction)
     candidates = []
     for item in profiles:
         micro = item.get("micro", 0)
@@ -112,7 +123,8 @@ def select_profile(profiles, world, global_batch):
         peak, capacity = item.get("peak_reserved_gib", math.inf), item.get("gpu_total_gib", 0)
         if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in (speed, peak, capacity)):
             continue
-        if speed > 0 and capacity > 0 and peak < .92 * capacity:
+        fits = peak < memory_limit_fraction * capacity or (memory_limit_fraction == 1 and peak == capacity)
+        if speed > 0 and capacity > 0 and fits:
             candidates.append(item)
     if not candidates:
         raise RuntimeError("No measured candidate passed warmup, throughput and long-sample memory gates")
@@ -143,7 +155,7 @@ def worker_command(plan, job, stage, model, name, micro, *, profile=False):
                "--root", plan["root"], "--model", str(model), "--processor", plan["processor"],
                "--vggt-source", plan["vggt_source"], "--vggt-weights", plan["vggt_weights"],
                "--adapter", job["adapter"], "--stage", stage, "--name", name,
-               "--micro", str(micro), "--global-batch", "448" if stage == "align" else "384"]
+               "--micro", str(micro), "--global-batch", str(448 if stage == "align" else plan.get('sft_global_batch',384))]
     if stage == "sft" and job["train_vggt"]:
         command.append("--train-vggt")
     if plan.get('encoder_batch_size', 1) != 1:
@@ -167,10 +179,10 @@ def worker_command(plan, job, stage, model, name, micro, *, profile=False):
     return command
 
 
-def diagnostic_manifests(root, stage, world, steps):
+def diagnostic_manifests(root, stage, world, steps, sft_global_batch=384):
     """Fixed mixed rows and longest real rows; all candidates see the same IDs."""
     rows = [json.loads(line) for line in (root / "manifests/sft.train.jsonl").read_text().splitlines() if line.strip()]
-    batch = 448 if stage == "align" else 384
+    batch = 448 if stage == "align" else sft_global_batch
     count = steps * batch
     if len(rows) < count:
         raise ValueError("Formal manifest too short for matched profile")
@@ -306,8 +318,9 @@ class Queue:
             return final
         profiles = []
         world = len(self.plan["gpus"])
-        batch = 448 if stage == "align" else 384
-        mixed, pressure = diagnostic_manifests(self.root, stage, world, self.plan.get("profile_steps", 6))
+        batch = 448 if stage == "align" else self.plan.get('sft_global_batch',384)
+        mixed, pressure = diagnostic_manifests(self.root, stage, world, self.plan.get("profile_steps", 6),
+                                             self.plan.get('sft_global_batch',384))
         for micro in (1, 2, 4):
             if batch % (world * micro):
                 continue
@@ -364,8 +377,10 @@ class Queue:
                     allowed.append(micro)
             except Exception as exc:
                 parity[str(micro)] = dict(status="failed", error=repr(exc))
-        chosen = select_profile([x for x in profiles if x["micro"] in allowed], world, batch)
+        chosen = select_profile([x for x in profiles if x["micro"] in allowed], world, batch,
+                                self.plan.get('memory_limit_fraction', .92))
         selection = dict(selected=chosen, profiles=profiles, global_batch=batch,
+                         memory_limit_fraction=self.plan.get('memory_limit_fraction', .92),
                          ga=batch // (world * chosen["micro"]), world_size=world,
                          numerical_parity=parity, permitted_micro_candidates=allowed)
         if self.plan.get("rows"):

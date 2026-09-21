@@ -4,10 +4,10 @@
 
 ## 保持科学定义的提速
 
-- 全局SFT batch384固定，micro1/2/4分别反向调整GA，不减少帧、样本或有效训练轮数。
+- 最新用户授权：三组新SFT统一全局batch64，micro1/2/4分别反向调整GA，不减少帧、样本或有效训练轮数。历史384诊断保留但不能作为64验收；用新运行目录从已完成alignment初始化，不是优化器续训。LR2e-5、1epoch、warmup比例0.03、cosine保持，调度总步数按新batch重算。RFT prompt batch16/G8不变。
 - 同长度序列沿VGGT的B维合批，不把独立视频拼入时间维；分布式各rank必须采用同样的调用分块，避免ZeRO3参数collective错序。
 - trainable VGGT不允许冻结缓存代替反向；frozen VGGT才可读缓存，且媒体顺序、预处理和权重版本一致。
-- 内存门留长样本余量；候选按热态有效样本/秒选择，不以reserved显存或瞬时GPU利用率最大化为目标。
+- 显存门默认保留长样本余量；用户本轮明确接受约37.8GiB峰值，因此使用显式`memory_limit_fraction: 1.0`，不再仅因超过92%容量淘汰。实际OOM、数值、长样本及重载检查仍保留；此授权不保证后续绝不OOM。候选按热态有效样本/秒选择，不以reserved显存或瞬时GPU利用率最大化为目标。
 - 新版保存间隔可配置为20步。续训需要完整model/optimizer/scheduler/RNG/Trainer状态、相同world和global batch、相同manifest与样本消费位置。只有权重不叫完整断点续训。
 - 没有SFT断点的刚启动任务不伪造恢复记录；从alignment初始化重新启动须标记restart，而非resume。
 - null-geometry评测的新代码避免先提VGGT再丢弃，显式force-null与正常输入布局不变。tiny模型逐logit回归不替代完整GPU模型验收。
