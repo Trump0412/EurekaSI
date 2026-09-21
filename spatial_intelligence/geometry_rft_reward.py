@@ -98,6 +98,8 @@ def spatialladder_numeric_reward(prediction, target):
 
 def score_response(response, ground_truth, task_type="mcq", choices=None, truncated=False, config=None):
     config = config or RewardConfig()
+    if config.version not in ('structured-spatial-qa-v1', 'geopsro-lexicon-strict-v2'):
+        raise ValueError('Unknown reward version')
     if config.tau <= 0 or len(config.vocabulary) != 3:
         raise ValueError("positive tau and three field vocabularies required")
     parsed = parse_response(response, task_type=task_type, choices=choices, truncated=truncated)
@@ -112,6 +114,15 @@ def score_response(response, ground_truth, task_type="mcq", choices=None, trunca
         matches[field] = sorted(tokens.intersection(word.casefold() for word in vocabulary))
     words = sum(min(1.0, len(value) / config.tau) for value in matches.values()) / 3
     structure = parsed["structure"]
+    if config.version == 'geopsro-lexicon-strict-v2':
+        from .geometry_rft_legacy_words import legacy_words_score
+        # Restore the full original lexical reward, not its unsafe answer parser.
+        # Numeric partial credit remains in answer; legacy words require answer=1.
+        words, breakdown = legacy_words_score(parsed['fields'], answer) if structure else (0.0, {})
+        return {**parsed, 'answer': answer, 'words': words, 'matches': {},
+                'word_breakdown': breakdown,
+                'total': answer + config.structure_weight * structure + config.words_weight * words,
+                'reward_version': config.version}
     return {**parsed, "answer": answer, "words": words, "matches": matches,
             "total": answer + config.structure_weight * structure + config.words_weight * answer * words,
             "reward_version": config.version}

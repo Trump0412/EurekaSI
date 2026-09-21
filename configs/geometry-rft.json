@@ -8,6 +8,7 @@
   "reference_passes": 2,
   "budget_rule": "updates=ceil(2*accepted_train_rows/16); prompt_budget=16*updates for both arms",
   "seed": 3407,
+  "prompt_version": "geopsro-original-template-numeric-safe-v2",
   "training": {
     "learning_rate": 0.000001,
     "kl_beta": 0.02,
@@ -26,7 +27,7 @@
     "freeze_native_rgb": true,
     "freeze_vggt": true,
     "reward": {
-      "version": "structured-spatial-qa-v1",
+      "version": "geopsro-lexicon-strict-v2",
       "tau": 3,
       "structure_weight": 0.5,
       "words_weight": 0.05

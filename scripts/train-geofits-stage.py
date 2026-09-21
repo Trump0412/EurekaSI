@@ -31,7 +31,9 @@ def validate_plan(plan, diagnostic_steps=0):
     if plan.get('use_lora') is not False or plan.get('variant', 'full') != 'full':
         raise ValueError('Only explicit full-parameter full GeoFits variant is implemented')
     data = read(plan['data_receipt'])
-    if data.get('status') != 'ready' or data.get('media_verified') is not True or data.get('leakage_checked') is not True:
+    from spatial_intelligence.followup_data_policy import validate_leakage_policy
+    validate_leakage_policy(data)
+    if data.get('status') != 'ready' or data.get('media_verified') is not True:
         raise ValueError('Audited media and source-scene data split required')
     if not diagnostic_steps:
         gate = read(plan['runtime_acceptance'])

@@ -35,6 +35,13 @@ def write(path, value):
 
 
 def validate_plan(plan):
+    encoder_batch = plan.get('encoder_batch_size', 1)
+    if type(encoder_batch) is not int or encoder_batch < 1:
+        raise ValueError('encoder_batch_size must be a positive integer')
+    if type(plan.get('trainable_encoder_batching', False)) is not bool:
+        raise ValueError('trainable_encoder_batching must be boolean')
+    if type(plan.get('save_steps', 100)) is not int or plan.get('save_steps',100)<1:
+        raise ValueError('save_steps must be a positive integer')
     for field in ("root", "python", "model", "processor", "vggt_source", "vggt_weights", "input_root"):
         if not plan.get(field):
             raise ValueError(f"Missing explicit {field}")
@@ -139,6 +146,16 @@ def worker_command(plan, job, stage, model, name, micro, *, profile=False):
                "--micro", str(micro), "--global-batch", "448" if stage == "align" else "384"]
     if stage == "sft" and job["train_vggt"]:
         command.append("--train-vggt")
+    if plan.get('encoder_batch_size', 1) != 1:
+        # A micro1 fallback must use the original serial path, not extra
+        # collective scheduling for a singleton batch.
+        command += ['--encoder-batch-size', str(min(plan['encoder_batch_size'], micro))]
+    if stage == 'sft' and job['train_vggt'] and plan.get('trainable_encoder_batching', False):
+        command.append('--trainable-encoder-batching')
+    if plan.get('save_steps',100)!=100:
+        command += ['--save-steps',str(plan['save_steps'])]
+    if stage=='sft' and not profile and job.get('resume_checkpoint'):
+        command += ['--resume-checkpoint',str(job['resume_checkpoint'])]
     if plan.get("manifest"):
         command += ["--manifest", plan["manifest"]]
     # Frozen-language activation checkpointing is validated with DDP alignment;

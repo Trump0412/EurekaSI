@@ -112,6 +112,9 @@ def run(plan, arm_name, mode):
     seed=int(plan.get('seed',3407)); set_seed(seed)
     arm=next(x for x in plan['jobs'] if x['name']==arm_name)
     recipe=read(plan['scientific_config']) if plan.get('scientific_config') else {}
+    from spatial_intelligence.geometry_rft import PROMPT_VERSION, STRUCTURED_INSTRUCTION
+    if recipe.get('prompt_version', PROMPT_VERSION) != PROMPT_VERSION:
+        raise ValueError('Scientific prompt version does not match snapshotted implementation')
     cfg={**recipe.get('training',{}),**plan.get('training',{})}
     plan=dict(plan,lora_rank=int(cfg.get('lora_rank',64)),lora_alpha=int(cfg.get('lora_alpha',128)))
     scope=cfg.get('policy_scope',plan.get('policy_scope','language_lora_geometry'))
@@ -150,6 +153,7 @@ def run(plan, arm_name, mode):
         'data_receipt':str(Path(plan['data_receipt']).resolve()),'group_size':group,
         'prompts_per_update':prompt_batch,'updates':target,'formal_updates':updates,
         'prompt_budget':target*prompt_batch,'world':world,'seed':seed,'training':cfg,
+        'prompt_version':PROMPT_VERSION,'prompt_instruction':STRUCTURED_INSTRUCTION,
         'reference_rows':reference_rows,'engine':'HF synchronous GSPO, not VERL',
         'policy_scope':scope,'optimizer_state_offload':offload,
         'reference_implementation':'separate frozen SFT language/interface' if scope==FULL_SCOPE else 'PEFT disabled adapter',

@@ -55,11 +55,41 @@ def arguments():
     p.add_argument('--verify-reload', action='store_true')
     p.add_argument('--parity', action='store_true', help='Disposable full-gradient micro1 versus micro2/4 comparison')
     p.add_argument('--encoder-batch-size',type=int,default=1,help='Opt-in equal-length frozen VGGT batch size')
+    p.add_argument('--trainable-encoder-batching',action='store_true',help='Experimental synchronized deterministic VGGT batching; requires independent runtime gates')
+    p.add_argument('--save-steps',type=int,default=100)
+    p.add_argument('--resume-checkpoint',type=Path,help='Explicit full Trainer checkpoint from a compatible immutable run')
     p.add_argument('--alignment-checkpoint-threshold',type=int,default=0,help='Opt-in no language recompute for short alignment inputs; requires separate runtime profiling')
     p.add_argument('--evaluate', action='store_true')
     p.add_argument('--benchmark', choices=['revsi', 'vsibench'])
     p.add_argument('--smoke-per-type', type=int, default=0); p.add_argument('--merge', action='store_true')
     return p.parse_args()
+
+
+def validate_resume_checkpoint(checkpoint, current):
+    """Allow throughput changes, not new data/optimizer/budget experiments."""
+    checkpoint=Path(checkpoint)
+    previous=json.loads((checkpoint.parent/'contract.json').read_text())
+    if previous.get('diagnostic') or current.get('diagnostic'):
+        raise ValueError('Diagnostic weights cannot initialize formal optimizer continuation')
+    if not (checkpoint/'trainer_state.json').is_file():
+        raise ValueError('A full Trainer checkpoint is required, not final model weights')
+    optimizer_files=list(checkpoint.rglob('*optim_states.pt'))
+    if not (checkpoint/'optimizer.pt').is_file() and not optimizer_files:
+        raise ValueError('Missing optimizer state; this is not resumable training')
+    if not list(checkpoint.glob('rng_state*.pth')):
+        raise ValueError('Missing RNG state; cannot claim exact training continuation')
+    mutable={'micro','ga','throughput_policy','save_steps','manifest','deepspeed'}
+    if {k:v for k,v in previous.items() if k not in mutable}!={k:v for k,v in current.items() if k not in mutable}:
+        raise ValueError('Resume scientific/optimizer/budget contract changed')
+    if Path(previous['manifest']).read_bytes()!=Path(current['manifest']).read_bytes():
+        raise ValueError('Resume manifest contents/order changed')
+    for item in (previous,current):
+        if item['micro']*item['ga']*item['world']!=item['global_batch']:
+            raise ValueError('Resume global batch is inconsistent')
+    before,after=previous.get('deepspeed'),current.get('deepspeed')
+    if bool(before)!=bool(after) or (before and json.loads(Path(before).read_text())!=json.loads(Path(after).read_text())):
+        raise ValueError('Resume sharding/optimizer engine changed')
+    return str(checkpoint)
 
 
 def parity(a):
@@ -82,6 +112,7 @@ def parity(a):
     if any(originals.get(r['id'])!=r for r in rows): raise ValueError('Changed diagnostic examples')
     model=load_matrix_model(a.model,a.vggt_source,a.vggt_weights,a.adapter,a.stage,a.train_vggt).cuda()
     model.geometry_encoder_batch_size=a.encoder_batch_size
+    model.geometry_backbone.trainable_batching=a.trainable_encoder_batching
     model.alignment_checkpoint_threshold=a.alignment_checkpoint_threshold
     collator=MatrixCollator(AutoProcessor.from_pretrained(a.processor),a.vggt_source,a.adapter)
     losses=[]; reference={}; numerator=denominator=0.
@@ -207,11 +238,12 @@ def train(a):
     out.mkdir(parents=True, exist_ok=True)
     processor = AutoProcessor.from_pretrained(a.processor)
     model = load_matrix_model(a.model, a.vggt_source, a.vggt_weights, a.adapter, a.stage, a.train_vggt)
-    if a.encoder_batch_size<1 or a.alignment_checkpoint_threshold<0:
+    if a.encoder_batch_size<1 or a.alignment_checkpoint_threshold<0 or a.save_steps<1:
         raise ValueError('Invalid throughput policy')
     if a.alignment_checkpoint_threshold and a.stage!='align':
         raise ValueError('Adaptive alignment checkpointing cannot be applied to SFT')
     model.geometry_encoder_batch_size=a.encoder_batch_size
+    model.geometry_backbone.trainable_batching=a.trainable_encoder_batching
     model.alignment_checkpoint_threshold=a.alignment_checkpoint_threshold
     ga = a.global_batch // (world*a.micro)
     # Frozen language weights still participate in activation recomputation.
@@ -226,12 +258,19 @@ def train(a):
         weight_decay=0., dropout=0., warmup=.03, deepspeed=effective_deepspeed,
         sharding='zero3' if effective_deepspeed else 'ddp',
         diagnostic=a.profile, max_steps=a.max_steps, version=1)
-    if a.encoder_batch_size!=1 or a.alignment_checkpoint_threshold:
+    if a.save_steps != 100:
+        contract['save_steps']=a.save_steps
+    if a.encoder_batch_size!=1 or a.alignment_checkpoint_threshold or a.trainable_encoder_batching:
         contract['throughput_policy']=dict(encoder_batch_size=a.encoder_batch_size,
+            trainable_encoder_batching=a.trainable_encoder_batching,
             alignment_checkpoint_threshold=a.alignment_checkpoint_threshold)
     path = out/'contract.json'
     if path.exists() and json.loads(path.read_text()) != contract: raise ValueError('Resume contract mismatch')
     last = get_last_checkpoint(str(out))
+    if a.resume_checkpoint:
+        if last:
+            raise ValueError('New-root continuation required; source and local checkpoints cannot be mixed')
+        last=validate_resume_checkpoint(a.resume_checkpoint,contract)
     if (out/'completion.json').exists(): raise ValueError('Already completed; do not repeat training')
     args = TrainingArguments(output_dir=str(out), num_train_epochs=1, max_steps=a.max_steps,
         per_device_train_batch_size=a.micro, gradient_accumulation_steps=ga,
@@ -239,7 +278,7 @@ def train(a):
         bf16=True, tf32=True, gradient_checkpointing=True,
         gradient_checkpointing_kwargs={'use_reentrant':False}, dataloader_num_workers=4,
         dataloader_persistent_workers=True, dataloader_pin_memory=True,
-        save_steps=100, save_total_limit=2, logging_steps=1, report_to=[],
+        save_steps=a.save_steps, save_total_limit=2, logging_steps=1, report_to=[],
         remove_unused_columns=False, ddp_find_unused_parameters=False,
         seed=3407, data_seed=3407, optim='adamw_torch_fused', deepspeed=effective_deepspeed)
     class MatrixTrainer(Trainer):

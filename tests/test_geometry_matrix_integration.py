@@ -28,6 +28,11 @@ class TinyRegisteredVGGT(nn.Module):
         features = self.projection(images.mean((-1, -2)))
         return features[:, None].expand(-1, 1024, -1)
 
+    def forward_batch(self, sequences, max_batch=1):
+        # Match the registered backbone protocol while keeping this tiny fake
+        # focused on model ownership/export rather than batching performance.
+        return [self(images) for images in sequences]
+
 
 @pytest.fixture
 def model(monkeypatch):

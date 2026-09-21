@@ -2,6 +2,8 @@
 
 状态：实现与准备阶段，尚无本轮正式训练或测评成绩。关联的私有稿件不进入公开仓库；本文不复用稿件中的结果数字。
 
+2026-09-21 数据修订优先于下文旧五源表述：增加 MindCube train10K，VLM3R改用GeoThinker的VSI205456＋VST132053（32帧版本）而非100K上限；六源共享协议为`shared-six-source-geothinker-vlm3r-mindcube-v4-openspatial-waiver`。VST按官方errata修订问题和标签并记录，排除2350条；MindCube完整集包含训练题，不作为独立测试。用户允许OpenSpatial 100K在缺少场景映射时加入训练，全部train-only，重叠风险未知，不能声称全数据无污染。最终训练规模以媒体、其余五源场景隔离与合并验收为准。排程在主RFT后补两个奖励消融，见[奖励协议](../../docs/RFT_REWARD_ABLATION_PLAN.md)。
+
 ## 研究问题与公平比较
 
 本轮比较五种几何结构/训练方式。用户已取消新增 matched RGB SFT，因此不能严格回答几何是否优于同数据普通 SFT；历史 RGB 与原始基座仅作非匹配参考。强度诊断和无 LoRA RFT 的新决策见[补充契约](../../docs/GEOMETRY_NO_LORA_AND_STRENGTH.md)。

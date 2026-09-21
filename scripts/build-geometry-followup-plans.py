@@ -19,8 +19,12 @@ def build(bindings,scientific):
         root=PurePosixPath(node['root']);world=len(node['gpus'])
         if 64%world:raise ValueError('Global batch64 must divide assigned world')
         stages=[];inputs={}
-        data_gate=requirement(bindings['data_receipt'],status='ready',media_verified=True,leakage_checked=True,
+        data_gate=requirement(bindings['data_receipt'],status='ready',media_verified=True,
             selection_name=scientific['data_selection'])
+        if scientific.get('openspatial',{}).get('allow_unverified_scene_overlap') is True:
+            data_gate['equals']['known_sources_leakage_checked']=True
+        else:
+            data_gate['equals']['leakage_checked']=True
         train_prefix=['{python}','-m','torch.distributed.run','--standalone',f'--nproc_per_node={world}']
         for variant in route_roles[role]:
             architecture=copy.deepcopy(scientific['georoute']['architecture'])

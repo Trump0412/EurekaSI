@@ -126,14 +126,21 @@ class CPUStateAdamW(torch.optim.AdamW):
             elif parameter.grad is not None: parameter.grad.zero_()
 
 
-STRUCTURED_INSTRUCTION = '''Reason from the supplied visual evidence. Do not invent timestamps or measurements.
-Use exactly this structure, filling every field with your own reasoning:
+PROMPT_VERSION = 'geopsro-original-template-numeric-safe-v2'
+# Original GeoPSRO data/formatters.py::psro_prompt instruction. The numeric
+# suffix below is an explicit adapter for our strict SpatialLadder interface.
+STRUCTURED_INSTRUCTION = '''You should solve the problem using the following format:
+
 <think>
-Spatial Observation: relevant entities, views, and spatial states.
-Spatial Transition: camera/object motion, visibility or relation changes; for static views, explain the viewpoint change.
-Answer Derivation: combine the observations and transitions to resolve the question.
+Spatial Observation: write one concise sentence describing the relevant visual-spatial evidence.
+Spatial Transition: write one concise sentence describing the key spatial change, state continuity, or multi-frame relation.
+Answer Derivation: write one concise sentence explaining how the previous two parts determine the final answer.
 </think>
-<answer>one final option letter, or a numeric value only without unit text, expressed in the requested units</answer>'''
+<answer>
+Write only the final answer. For multiple-choice questions, write only the option letter.
+</answer>
+
+For numeric questions, write a numeric value only without unit text, expressed in the requested units.'''
 
 
 def add_policy_adapter(base, rank=64, alpha=128):

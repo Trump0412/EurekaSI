@@ -181,6 +181,37 @@ private-plan policy; allocated GPUs must still be idle. Failure of shared
 alignment is different: its consumer cannot invent replacement weights and must
 block. A background PID or queue receipt is not a successful optimizer update.
 
+### Opt-in encoder batching and checkpoint continuation
+
+Private plans may set `encoder_batch_size: 4`,
+`trainable_encoder_batching: true`, and `save_steps: 20`. The runner caps the
+encoder batch at the selected microbatch: micro1 retains the original serial
+path. Independent sequences are batched along B, never concatenated along time.
+For distributed frozen **and** trainable VGGT, all ranks agree on contiguous
+equal-length chunks before executing the trunk, preserving ZeRO-3 parameter
+collective order. Nonzero stochastic dropout/drop-path rejects trainable batching;
+the optimization never silently disables it. Existing armed snapshots stay intact.
+
+Current acceptance evidence: six CPU tests cover order, gradient equivalence,
+AdamW state continuation, and actual two-rank Gloo scheduling; 19 queue/resume
+contract tests pass. A real eight-rank ZeRO-3 diagnostic with micro2/encoder2
+and two-frame inputs completed two optimizer steps, updated geometry interface,
+VGGT, native vision, and language parameters, and reloaded with zero maximum
+logit difference. Its maximum reserved memory was 13.38 GiB. This is an interface
+gate, **not** evidence of full-mixture acceleration or 32-frame safety. Each
+allocation still profiles micro1/2/4 on the locked mixture and long samples,
+checks reload/numerical gates, and selects the fastest candidate below 92% memory.
+
+`jobs[].resume_checkpoint` passes a full Trainer checkpoint to the SFT worker.
+Continuation requires optimizer and RNG states, identical manifest bytes/order,
+world size, effective batch, stage, seed, training budget and DeepSpeed engine
+configuration. Only microbatch/GA, encoder execution policy and checkpoint cadence
+may change. These checks and tiny CPU optimizer tests do not prove exact GPU
+restart parity; retain that distinction in receipts. If no optimizer checkpoint
+exists, restarting from the completed alignment is a **restart**, not a resume.
+When a producer root changes, migrate downstream RL/evaluation dependencies to
+the new version together; never leave consumers waiting on an abandoned producer.
+
 ## Evaluation, results and ETA
 
 Use [paired spatial evaluation protocol](BATCH_AND_EVAL_PROTOCOL.md): fixed ReVSI

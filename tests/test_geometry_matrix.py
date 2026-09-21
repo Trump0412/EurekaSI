@@ -22,6 +22,20 @@ def profile(micro=1, speed=4., peak=30.):
 
 
 class GeometryMatrixTests(unittest.TestCase):
+    def test_encoder_throughput_options_are_explicit(self):
+        p = plan(); p['encoder_batch_size'] = 4
+        p['trainable_encoder_batching'] = True
+        job = dict(name='trainable', adapter='downsample', train_vggt=True)
+        command = queue.worker_command(p, job, 'sft', '/align', 'probe', 2)
+        self.assertIn('--trainable-encoder-batching', command)
+        self.assertEqual(command[command.index('--encoder-batch-size')+1], '2')
+        serial = queue.worker_command(p, job, 'sft', '/align', 'probe', 1)
+        self.assertEqual(serial[serial.index('--encoder-batch-size')+1], '1')
+        frozen = queue.worker_command(p, p['jobs'][0], 'sft', '/align', 'probe', 2)
+        self.assertNotIn('--trainable-encoder-batching', frozen)
+        p['encoder_batch_size'] = True
+        with self.assertRaises(ValueError): queue.validate_plan(p)
+
     def test_explicit_configuration(self):
         queue.validate_plan(plan())
         bad = plan(); bad["jobs"][0].pop("train_vggt")

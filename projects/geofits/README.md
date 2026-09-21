@@ -2,13 +2,15 @@
 
 用户项目名GeoFits，关联私有稿件正文称SpatialFit；本次统一工程目录为GeoFits。不把旧稿件数字作为已验证结果，不上传稿件。
 
+2026-09-21修订：与GeoRoute共享六源协议（增加MindCube train10K，VLM3R使用GeoThinker32帧VSI205456＋VST132053，取消100K上限；VST官方errata排除2350条）；下文五源为旧版本记录，以`configs/geometry-followup-studies.json`和新数据验收receipt为准。OpenSpatial 100K获用户授权在缺少场景映射时全部加入train-only，明确记录场景重叠未知，不声称全数据无污染。不得将MindCube完整集中的训练题计入独立测试。
+
 ## 顺序与核心比较
 
 等前序论文及GeoRoute全部必选训练/评测完成后执行。本方法从相同released Qwen3-VL-2B初始化，不从GeoRoute权重继续微调，因此阶段顺序不混入初始化优势。五源数据、split、输入、全参数更新范围及通用评测与GeoRoute一致。
 
 主模型使用VGGT层11/17/23、Pi3层17/26/35组成每视觉区域6条候选；在decoder第1/2/3层做TopK2检索与独立sigmoid门控。使用SFT答案监督，无TIP或单独连续性预训练。
 
-计划重新训练的对照：3D-only、4D-only、dense融合、无gate、单层融合；同时使用新五源全参数RGB SFT对照。不同bank大小/宽度/层数会改变参数量与算力，逐组记录，不仅比准确率。
+计划重新训练的对照：3D-only、4D-only、dense融合、无gate、单层融合；当前优先准备full，其余组不能仅因配置列出便视为已部署。用户已取消新增matched RGB SFT，历史RGB只能作非匹配参考。不同bank大小/宽度/层数会改变参数量与算力，逐组记录，不仅比准确率。新增RFT奖励消融的顺序和待部署边界见[奖励消融计划](../../docs/RFT_REWARD_ABLATION_PLAN.md)。
 
 ## 必须补足的条件
 

@@ -1,0 +1,27 @@
+{
+  "selection_name": "shared-six-source-geothinker-vlm3r-mindcube-v4-openspatial-waiver",
+  "contamination_waiver": {"authorized": true, "scope": "openspatial_only", "scene_overlap": "unknown", "validation_policy": "all OpenSpatial train-only", "reason": "User explicitly authorizes the OpenSpatial scene-mapping limitation; all other sources retain their gates"},
+  "endpoint": "https://hf-mirror.com",
+  "vlm3r": {
+    "repo": "lihy285/GeoThinker",
+    "repo_type": "model",
+    "patterns": ["train/vlm3r_vsi_205k_32frames.json", "train/vlm3r_vst_132k_32frames.json"],
+    "expected_released_32frame_rows": {"vsi": 205456, "vst": 132053},
+    "reference_8frame_vst_rows": 132568,
+    "cap": null,
+    "correction": "Join corrected original VST annotations by ID; validate source/scene/task; use revised question AND answer; ledger all changes and upstream erratum drops",
+    "frame_policy": "Exactly released 32 real frames; never combine 8/16/32 variants as new examples"
+  },
+  "mindcube": {
+    "repo": "MLL-Lab/MindCube",
+    "repo_type": "dataset",
+    "revision": "9c941b46a6bd65b6914669ef7a579948fc9c8467",
+    "patterns": ["data.zip", "README.md"],
+    "train": "data/raw/MindCube_train.jsonl",
+    "evaluation": "data/raw/MindCube_tinybench.jsonl",
+    "forbidden_heldout": "data/raw/MindCube.jsonl",
+    "expected_train_rows": 10000,
+    "expected_tiny_rows": 1050
+  },
+  "readiness": "This component is not the completed six-source training manifest; require full merge/global scene split/media coverage before training."
+}

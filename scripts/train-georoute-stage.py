@@ -58,7 +58,9 @@ def train(plan,stage,micro,diagnostic_steps=0):
     from spatial_intelligence.georoute_inputs import RouteCollator,GraphCache,load_teacher
     from spatial_intelligence.qwen35 import completion_loss
     data=read(plan['data_receipt'])
-    if data.get('status')!='ready' or data.get('media_verified') is not True or data.get('leakage_checked') is not True:
+    from spatial_intelligence.followup_data_policy import validate_leakage_policy
+    validate_leakage_policy(data)
+    if data.get('status')!='ready' or data.get('media_verified') is not True:
         raise ValueError('Five-source data are not accepted; downloaded assets are insufficient')
     if plan.get('use_lora') is not False: raise ValueError('Explicit full-parameter recipe required')
     if not diagnostic_steps:
