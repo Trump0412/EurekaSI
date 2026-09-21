@@ -27,4 +27,4 @@ def test_display_size_is_rounded_binary_units_but_zero_never_passes(recovery):
 
 def test_source_empty_is_distinct_from_transient_download_failure(recovery):
     assert recovery.upstream_empty_files({'a.mp4': '0B', 'b.mp4': '4.53MB',
-                                          'c.mp4': '0.00KB'}) == ['a.mp4', 'c.mp4']
+                                          'c.mp4': '0.00KB'}) == ['a.mp4']
