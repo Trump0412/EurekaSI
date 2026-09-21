@@ -49,7 +49,7 @@ def schedule(rows,stage,global_batch=64,replay_every=15,seed=3407):
                        total_scheduled_rows=len(result),unit='15 instruction optimizer updates then 1 TIP update')
 
 
-def train(plan,stage,micro,diagnostic_steps=0):
+def train(plan,stage,micro,diagnostic_steps=0,pause_request=None):
     import torch
     from torch.utils.data import Dataset,SequentialSampler
     from transformers import AutoProcessor,Trainer,TrainingArguments,TrainerCallback,set_seed,Qwen3VLForConditionalGeneration
@@ -57,6 +57,7 @@ def train(plan,stage,micro,diagnostic_steps=0):
     from spatial_intelligence.georoute import (load_georoute_model,configure_stage,batch_graphs,make_tip_intervention)
     from spatial_intelligence.georoute_inputs import RouteCollator,GraphCache,load_teacher
     from spatial_intelligence.qwen35 import completion_loss
+    from spatial_intelligence.cooperative_pause import PauseProtocol,persistent_probe_baselines,validate_full_checkpoint
     data=read(plan['data_receipt'])
     from spatial_intelligence.followup_data_policy import validate_leakage_policy
     validate_leakage_policy(data)
@@ -81,11 +82,15 @@ def train(plan,stage,micro,diagnostic_steps=0):
     arranged,count=schedule(source,stage,global_batch,plan.get('replay_every',15) if use_tip else 0,plan.get('seed',3407))
     out=Path(plan['root'])/('diagnostic' if diagnostic_steps else 'formal')/stage/f'micro{micro}'
     out.mkdir(parents=True,exist_ok=True)
-    initial=plan['model'] if stage=='tip' or not use_tip else plan['tip_checkpoint']
+    initial=plan['model'] if stage=='tip' or not use_tip else (
+        plan['diagnostic_tip_checkpoint'] if diagnostic_steps and plan.get('diagnostic_tip_checkpoint') else plan['tip_checkpoint'])
     if stage=='sft' and use_tip:
-        tip_receipt=read(plan['tip_receipt'])
-        if tip_receipt.get('status')!='complete' or tip_receipt.get('accepted') is not True or tip_receipt.get('diagnostic') is not False:
-            raise ValueError('A complete accepted formal TIP checkpoint is required')
+        if diagnostic_steps and plan.get('diagnostic_tip_checkpoint'):
+            initial=plan['diagnostic_tip_checkpoint']
+            tip_receipt=read(plan['diagnostic_tip_receipt'])
+        else:tip_receipt=read(plan['tip_receipt'])
+        if tip_receipt.get('status')!='complete' or tip_receipt.get('accepted') is not True or (not diagnostic_steps and tip_receipt.get('diagnostic') is not False):
+            raise ValueError('A complete accepted TIP checkpoint is required; formal SFT requires formal TIP lineage')
         if Path(tip_receipt['checkpoint']).resolve()!=Path(initial).resolve(): raise ValueError('TIP lineage mismatch')
     contract=dict(stage=stage,variant=plan.get('variant','full'),initial_model=initial,training='full_parameter_no_lora',count=count,micro=micro,world=world,
         ga=64//(world*micro),global_batch=64,seed=plan.get('seed',3407),lr=1e-5,warmup=.03,weight_decay=0.,
@@ -116,6 +121,7 @@ def train(plan,stage,micro,diagnostic_steps=0):
         cache=GraphCache(plan['graph_cache'],teacher,identity,plan['graph'],torch.device('cuda',local))
     model.config.use_cache=False
     processor=AutoProcessor.from_pretrained(plan['processor'])
+    pause=PauseProtocol(pause_request,out)
     collator=RouteCollator(processor,training=True)
     class Rows(Dataset):
         def __len__(self): return len(arranged)
@@ -163,6 +169,9 @@ def train(plan,stage,micro,diagnostic_steps=0):
             indices=torch.arange(count,device=full.device,dtype=torch.int64)*(size-1)//max(1,count-1)
             return full.detach().flatten()[indices].cpu().clone()
         def on_train_begin(self,args,state,control,model=None,**kwargs):
+            if (out/'finite-loss-history.json').exists():
+                self.losses=read(out/'finite-loss-history.json')['losses']
+                if not all(math.isfinite(value) for value in self.losses):raise ValueError('Invalid prior loss audit')
             wanted={} if stage=='tip' else {'language':'.language_model.layers.0.self_attn.q_proj.weight',
                                           'native_visual':'.visual.blocks.0.attn.qkv.weight'}
             if not baseline:
@@ -172,6 +181,13 @@ def train(plan,stage,micro,diagnostic_steps=0):
                 matches=[p for name,p in model.named_parameters() if name.endswith(suffix) and p.requires_grad]
                 if len(matches)!=1: raise ValueError('Parameter ownership/probe mismatch: '+group)
                 self.probes[group]=(matches[0],self.probe(matches[0]));self.updated[group]=False
+            initial=persistent_probe_baselines(out/'original-probe-baselines.pt',
+                {group:value[1] for group,value in self.probes.items()})
+            self.probes={group:(value[0],initial[group]) for group,value in self.probes.items()}
+        def on_step_end(self,args,state,control,**kwargs):
+            return pause.step_end(control,args.device)
+        def on_save(self,args,state,control,**kwargs):
+            pause.saved(state.global_step)
         def on_train_end(self,args,state,control,**kwargs):
             for group,(parameter,before) in self.probes.items():
                 after=self.probe(parameter)
@@ -183,6 +199,7 @@ def train(plan,stage,micro,diagnostic_steps=0):
                 self.losses.append(float(logs['loss']))
                 if not math.isfinite(self.losses[-1]): raise ValueError('Nonfinite optimizer loss')
                 if state.is_world_process_zero:
+                    write(out/'finite-loss-history.json',dict(losses=self.losses))
                     warm=self.steps[2:] or self.steps
                     write(out/'live-eta.json',dict(step=state.global_step,total_steps=state.max_steps,loss=logs['loss'],
                         seconds_per_update=sum(warm)/len(warm),remaining_seconds=(state.max_steps-state.global_step)*sum(warm)/len(warm),
@@ -193,6 +210,14 @@ def train(plan,stage,micro,diagnostic_steps=0):
     # perform its ordinary GA scaling, regardless of the model **kwargs signature.
     trainer.model_accepts_loss_kwargs=False
     last=get_last_checkpoint(str(out))
+    if last:
+        validate_full_checkpoint(last,world)
+        if not (out/'original-probe-baselines.pt').exists():
+            raise ValueError('Resume lacks original parameter audit; cannot claim whole-run update verification')
+        if pause_request and Path(pause_request).exists():
+            raise ValueError('Pause request remains active; scheduler must clear it before resuming')
+        if trainer.is_world_process_zero():
+            write(out/'resume.json',dict(status='resuming',checkpoint=last,scientific_contract_unchanged=True))
     trainer.train(resume_from_checkpoint=last)
     # Preserve a final resumable Trainer checkpoint even for a short diagnostic
     # or a final tail shorter than the periodic checkpoint interval.
@@ -259,8 +284,14 @@ def main():
     parser.add_argument('--plan',required=True);parser.add_argument('--stage',choices=['tip','sft'],required=True)
     parser.add_argument('--micro',type=int,default=1);parser.add_argument('--diagnostic-steps',type=int,default=0)
     parser.add_argument('--verify-saved',action='store_true')
+    parser.add_argument('--pause-request',help='Private request file; acknowledge only after a full optimizer-boundary checkpoint')
     args=parser.parse_args()
-    (verify_saved if args.verify_saved else train)(read(args.plan),args.stage,args.micro,args.diagnostic_steps)
+    if args.verify_saved:
+        verify_saved(read(args.plan),args.stage,args.micro,args.diagnostic_steps)
+    else:
+        from spatial_intelligence.cooperative_pause import TrainingPaused
+        try:train(read(args.plan),args.stage,args.micro,args.diagnostic_steps,args.pause_request)
+        except TrainingPaused:raise SystemExit(75)
 
 
 if __name__=='__main__': main()

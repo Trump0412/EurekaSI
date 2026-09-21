@@ -26,7 +26,7 @@ def dump(path, value):
     temp = path.with_suffix('.tmp');temp.write_text(json.dumps(value, indent=2));temp.replace(path)
 
 
-def extract_archive(archive, dest, wanted):
+def extract_archive(archive, dest, wanted, trusted_reuse_roots=()):
     extracted = 0
     with tarfile.open(archive, 'r|gz') as stream:
         for member in stream:
@@ -34,14 +34,28 @@ def extract_archive(archive, dest, wanted):
             if name not in wanted:
                 continue
             path = dest/name
-            if not member.isfile() or not path.resolve().is_relative_to(dest.resolve()):
-                raise ValueError('Unsafe archive member')
+            if Path(name).is_absolute() or '..' in Path(name).parts or not member.isfile():
+                raise ValueError(f'Unsafe archive member type/path: {name!r} type={member.type!r}')
+            if not path.parent.resolve().is_relative_to(dest.resolve()):
+                raise ValueError(f'Unsafe archive parent: {name!r} -> {path.parent.resolve()}')
+            if path.is_symlink():
+                resolved = path.resolve()
+                if not any(resolved.is_relative_to(Path(r).resolve()) for r in trusted_reuse_roots):
+                    raise ValueError(f'Unapproved reuse symlink: {name!r} -> {resolved}')
+                if not resolved.is_file() or resolved.stat().st_size != member.size:
+                    raise ValueError(f'Reused media size mismatch: {name!r} -> {resolved}; expected={member.size}')
+                continue  # Explicitly approved existing input: never open it for writing.
+            if not path.resolve().is_relative_to(dest.resolve()):
+                raise ValueError(f'Unsafe archive destination: {name!r}')
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 if path.stat().st_size != member.size:
                     raise ValueError('Existing media size mismatch')
                 continue
-            with stream.extractfile(member) as source, path.with_suffix(path.suffix+'.part').open('wb') as target:
+            part = path.with_suffix(path.suffix+'.part')
+            if part.is_symlink():
+                raise ValueError(f'Unsafe partial-file symlink: {part}')
+            with stream.extractfile(member) as source, part.open('wb') as target:
                 shutil.copyfileobj(source, target, length=2**20)
             path.with_suffix(path.suffix+'.part').replace(path)
             extracted += 1
@@ -156,7 +170,8 @@ def run(args):
         if not (root/'datasets/vsi590k'/name).is_file():raise ValueError('Missing source archive: '+name)
     with ThreadPoolExecutor(max_workers=2) as pool:
         jobs = {pool.submit(extract_archive, root/'datasets/vsi590k'/name, media,
-                            {rel for rel in wanted if rel.startswith(name.removesuffix('.tar.gz')+'/')}):name for name in archives}
+                            {rel for rel in wanted if rel.startswith(name.removesuffix('.tar.gz')+'/')},
+                            args.trusted_reuse_root):name for name in archives}
         done = []
         for future in as_completed(jobs):
             done.append(dict(archive=jobs[future], extracted=future.result()))
@@ -207,6 +222,7 @@ if __name__ == '__main__':
     p.add_argument('--authorize-openspatial-scene-waiver', action='store_true')
     p.add_argument('--workers', type=int, default=4);p.add_argument('--seed', type=int, default=3407)
     p.add_argument('--reuse-vsi-media-root', help='Read-only completed files from a stopped earlier attempt')
+    p.add_argument('--trusted-reuse-root', action='append', default=[], help='Explicit allowed final resolved roots of read-only reused files')
     a = p.parse_args()
     if not a.authorize_openspatial_scene_waiver:p.error('Explicit user authorization required')
     try:run(a)
