@@ -71,6 +71,14 @@ def prepare(args):
     receipt = root / "receipt.json"
     write(receipt, report)
     try:
+        recovery_audit = None
+        if getattr(args, 'exclude_upstream_empty', False):
+            from spatial_intelligence.rft_recovery import audit_source_inventory
+            if args.supplied_inventory is None:
+                raise ValueError('Explicit upstream-empty exclusions require the original supplied inventory')
+            recovery_audit = audit_source_inventory(args.supplied_inventory, args.four_d_media)
+            report['explicit_source_empty_recovery'] = recovery_audit
+            report['limitations'].append('Explicitly excludes upstream zero-byte source videos; not complete supplied-media reproduction')
         dsr = [normalize_dsr(x, i, args.dsr_media) for i,x in enumerate(
             pd.read_parquet(args.dsr_annotations).to_dict("records"))]
         four_d, annotation_exclusions = [], []
@@ -113,6 +121,15 @@ def prepare(args):
             else:
                 seen.add(signature); unique.append(row)
         split_rows = group_split(unique, args.seed, args.validation_fraction)
+        if recovery_audit is not None:
+            from spatial_intelligence.rft_recovery import exclude_source_empty_after_split
+            split_rows, empty_exclusions = exclude_source_empty_after_split(
+                split_rows, recovery_audit['upstream_empty_files'])
+            exclusions.extend(empty_exclusions)
+            report['explicit_source_empty_recovery']['excluded_rows'] = len(empty_exclusions)
+            report['explicit_source_empty_recovery']['excluded_by_original_split'] = dict(
+                Counter(row['original_split'] for row in empty_exclusions))
+            report['explicit_source_empty_recovery']['split_policy'] = 'Remove only explicit empty media after original split; all retained assignments unchanged'
         if len({x["id"] for x in split_rows}) != len(split_rows):
             raise ValueError("Duplicate canonical ID")
         report["exclusions"] = dict(Counter(x["reason"] for x in exclusions))
@@ -140,7 +157,14 @@ def prepare(args):
             results, failures = {}, []
             def task(path):
                 try:
-                    return path, extract_video(path, root / "frames" / name / Path(path).stem, frames), None
+                    destination = root / "frames" / name / Path(path).stem
+                    reuse_root = getattr(args, 'reuse_decoded_root', None)
+                    if reuse_root is not None:
+                        from spatial_intelligence.rft_recovery import reusable_cache
+                        previous = reuse_root / "frames" / name / Path(path).stem
+                        if reusable_cache(path, previous, frames):
+                            destination = previous
+                    return path, extract_video(path, destination, frames), None
                 except Exception as error:
                     return path, None, dict(path=path,error_type=type(error).__name__,error=str(error))
             report.update(status="decoding_"+name, decode_total=len(paths), decode_completed=0)
@@ -157,7 +181,7 @@ def prepare(args):
             return [dict(row, **{k:v for k,v in results[row["video_path"]].items() if k != "identity"}) for row in rows]
         dsr = decode_rows(dsr, 32, "dsr32")
         write_rows(root / "dsr.test.jsonl", dsr)
-        if args.download_receipt:
+        if args.download_receipt and recovery_audit is None:
             start_wait = time.time()
             while True:
                 state = json.loads(args.download_receipt.read_text()) if args.download_receipt.exists() else {}
@@ -203,6 +227,10 @@ def main():
     parser.add_argument("--benchmark-manifest",type=Path,action="append",required=True)
     parser.add_argument("--supplied-inventory",type=Path)
     parser.add_argument("--download-receipt",type=Path)
+    parser.add_argument('--exclude-upstream-empty', action='store_true',
+                        help='Explicit revised-data authorization: exclude only inventory-declared/local zero-byte videos after original split')
+    parser.add_argument('--reuse-decoded-root', type=Path,
+                        help='Read-only reuse of old decoded caches with matching source size/mtime/frame-count identity')
     parser.add_argument("--workers",type=int,default=2)
     parser.add_argument("--seed",type=int,default=3407)
     parser.add_argument("--validation-fraction",type=float,default=.02)
