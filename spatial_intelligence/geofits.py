@@ -31,6 +31,9 @@ class GeoFitsConfig:
     fusion_layers: tuple = (1, 2, 3)  # one-based, post decoder block
     top_k: int = 2
     gate_bias: float = 0.0
+    bank_sources: tuple = ('vggt', 'pi3')
+    retrieval_mode: str = 'topk'
+    gate_enabled: bool = True
 
     def __post_init__(self):
         if min(self.hidden_size, self.vggt_width, self.pi3_width,
@@ -44,8 +47,12 @@ class GeoFitsConfig:
             raise ValueError('Explicit timestamp encoding adaptation required')
         if self.vggt_levels != (11, 17, 23) or self.pi3_levels != (17, 26, 35):
             raise ValueError('Six-entry bank requires the declared teacher levels')
-        if self.top_k != 2 or self.fusion_layers != (1, 2, 3):
-            raise ValueError('This configuration implements three-stage TopK2 only')
+        if self.bank_sources not in (('vggt','pi3'),('vggt',),('pi3',)):
+            raise ValueError('Teacher bank must be full, 3D-only or 4D-only in declared order')
+        if self.top_k != 2 or self.fusion_layers not in ((1,2,3),(3,)):
+            raise ValueError('Only TopK2 and three-stage or layer-three fusion are supported')
+        if self.retrieval_mode not in ('topk','dense') or not isinstance(self.gate_enabled,bool):
+            raise ValueError('Explicit retrieval/gate ablation required')
 
 
 def relative_time(timestamps):
@@ -95,29 +102,32 @@ class GeometryBank(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.projectors = nn.ModuleList([nn.Linear(width, config.hidden_size)
-            for width in [config.vggt_width] * 3 + [config.pi3_width] * 3])
+        self.entry_specs=[(source,level) for source in config.bank_sources
+                          for level in (config.vggt_levels if source=='vggt' else config.pi3_levels)]
+        self.projectors = nn.ModuleList([nn.Linear(config.vggt_width if source=='vggt' else config.pi3_width, config.hidden_size)
+            for source,_ in self.entry_specs])
         self.temporal = nn.ModuleList([TemporalAdapter(config.pi3_width, config.temporal_bottleneck)
-                                       for _ in range(3)])
+                                       for _ in range(3 if 'pi3' in config.bank_sources else 0)])
 
     def forward(self, vggt, pi3, timestamps, *, native_grid):
         cfg = self.config
-        if set(vggt) != set(cfg.vggt_levels) or set(pi3) != set(cfg.pi3_levels):
+        if (set(vggt) != (set(cfg.vggt_levels) if 'vggt' in cfg.bank_sources else set()) or
+            set(pi3) != (set(cfg.pi3_levels) if 'pi3' in cfg.bank_sources else set())):
             raise ValueError('Missing or extra geometry bank levels')
         if timestamps is None:
             if cfg.timestamp_encoding != 'order_only_sincos':
                 raise ValueError('Measured timestamp mode cannot synthesize timestamps')
-            first = vggt[cfg.vggt_levels[0]]
+            first = vggt[cfg.vggt_levels[0]] if 'vggt' in cfg.bank_sources else pi3[cfg.pi3_levels[0]]
             timestamps = torch.arange(first.shape[1], device=first.device).expand(first.shape[0], -1)
         elif cfg.timestamp_encoding == 'order_only_sincos':
             raise ValueError('Order-only mode accepts no timestamps; provenance stays explicit')
         encoded = relative_time(timestamps)
         entries = []
         shape = None
-        for index, (mapping, level) in enumerate(
-                [(vggt, n) for n in cfg.vggt_levels] + [(pi3, n) for n in cfg.pi3_levels]):
+        for index, (source, level) in enumerate(self.entry_specs):
+            mapping=vggt if source=='vggt' else pi3
             grid = mapping[level]
-            width = cfg.vggt_width if index < 3 else cfg.pi3_width
+            width = cfg.vggt_width if source=='vggt' else cfg.pi3_width
             if grid.ndim != 5 or grid.shape[-1] != width:
                 raise ValueError('Teacher feature must be restored [B,T,H,W,C] patch grid')
             b, t, h, w, c = grid.shape
@@ -131,7 +141,7 @@ class GeometryBank(nn.Module):
             if not torch.isfinite(grid).all(): raise ValueError('Nonfinite teacher features')
             if grid.requires_grad:
                 raise ValueError('External teacher features must be frozen before trainable adapters')
-            if index >= 3: grid = self.temporal[index - 3](grid, encoded)
+            if source=='pi3': grid = self.temporal[cfg.pi3_levels.index(level)](grid, encoded)
             # Frame-major, then row-major matches the declared merged-grid contract.
             grid = grid.reshape(b, t, h // 2, 2, w // 2, 2, c).mean((3, 5))
             grid = grid.reshape(b, t // cfg.temporal_group_size, cfg.temporal_group_size,
@@ -148,23 +158,31 @@ class RegionRetrieval(nn.Module):
         self.query = nn.Linear(3 * d, r)
         self.key = nn.Linear(d, r); self.value = nn.Linear(d, d)
         self.output = nn.Linear(d, d)
-        self.gate = nn.Sequential(nn.Linear(3 * d, max(1, d // 4)), nn.GELU(), nn.Linear(max(1, d // 4), 1))
-        nn.init.constant_(self.gate[-1].bias, config.gate_bias)
+        self.gate = nn.Sequential(nn.Linear(3 * d, max(1, d // 4)), nn.GELU(), nn.Linear(max(1, d // 4), 1)) if config.gate_enabled else None
+        if self.gate is not None: nn.init.constant_(self.gate[-1].bias, config.gate_bias)
+        self.bank_size=3*len(config.bank_sources)
+        self.retrieval_mode=config.retrieval_mode
         self.retrieval_width = r
 
     def forward(self, current, original, context, bank):
-        if current.shape != original.shape or bank.shape != (*current.shape[:2], 6, current.shape[-1]):
+        if current.shape != original.shape or bank.shape != (*current.shape[:2], self.bank_size, current.shape[-1]):
             raise ValueError('Region, original visual tokens and six-entry bank must align')
         context = self.norm_c(context)[:, None, :].expand_as(current)
         normalized = self.norm_x(current)
         query = self.query(torch.cat((normalized, original, context), -1))
         scores = (query.unsqueeze(2).float() * self.key(bank).float()).sum(-1) / math.sqrt(self.retrieval_width)
-        selected, indices = scores.topk(2, dim=-1)
-        weights = torch.zeros_like(scores).scatter(-1, indices, selected.softmax(-1))
+        if self.retrieval_mode=='dense':
+            weights=scores.softmax(-1)
+            indices=torch.arange(self.bank_size,device=scores.device).expand(*scores.shape[:-1],-1)
+        else:
+            selected, indices = scores.topk(2, dim=-1)
+            weights = torch.zeros_like(scores).scatter(-1, indices, selected.softmax(-1))
         retrieved = (weights.to(bank).unsqueeze(-1) * self.value(bank)).sum(2)
         h = self.norm_h(retrieved)
-        gate = self.gate(torch.cat((normalized, context, h), -1)).sigmoid()
-        return current + gate * self.output(h), {'weights': weights, 'indices': indices, 'gate': gate}
+        gate = self.gate(torch.cat((normalized, context, h), -1)).sigmoid() if self.gate is not None else torch.ones_like(h[...,:1])
+        residual=gate * self.output(h)
+        return current + residual, {'weights': weights, 'indices': indices, 'gate': gate,
+                                    'intended_residual':residual}
 
 
 class GeoFitsFusion(nn.Module):
@@ -179,7 +197,7 @@ class GeoFitsFusion(nn.Module):
         super().__init__()
         self.config = config
         self.bank = GeometryBank(config)
-        self.layers = nn.ModuleList([RegionRetrieval(config) for _ in range(3)])
+        self.layers = nn.ModuleList([RegionRetrieval(config) for _ in config.fusion_layers])
 
     def forward(self, hidden, original_visual, bank, *, visual_indices,
                 question_indices, prefix_lengths, layer, labels=None):
@@ -204,7 +222,7 @@ class GeoFitsFusion(nn.Module):
             if (labels[prefix] != -100).any(): raise ValueError('Answer supervision leaked into question prefix')
         row = torch.arange(b, device=hidden.device)
         current = hidden[row[:, None], visual_indices]
-        fused, diagnostics = self.layers[layer - 1](current, original_visual,
+        fused, diagnostics = self.layers[self.config.fusion_layers.index(layer)](current, original_visual,
                                                     hidden[row, question_indices], bank)
         output = hidden.clone()
         output[row[:, None], visual_indices] = fused
@@ -244,11 +262,11 @@ class InstalledFusionHooks:
     hook, so ordering is decoder -> geometry -> native DeepStack (additive).
     """
     def __init__(self, decoder_layers, fusion):
-        if len(decoder_layers) < 3: raise ValueError('Three decoder layers required')
+        if len(decoder_layers) < max(fusion.config.fusion_layers): raise ValueError('Missing selected decoder layer')
         self.fusion = fusion
         self.current = None
-        self.handles = [decoder_layers[index].register_forward_hook(self._hook(index + 1))
-                        for index in range(3)]
+        self.handles = [decoder_layers[layer-1].register_forward_hook(self._hook(layer))
+                        for layer in fusion.config.fusion_layers]
 
     def _hook(self, layer):
         def callback(module, args, output):

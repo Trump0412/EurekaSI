@@ -49,6 +49,8 @@ def validate(plan):
             if not isinstance(command,list) or not command or not all(isinstance(v,str) for v in command):
                 raise ValueError('Commands must be explicit argv, never shell strings')
         if not stage.get('receipt'): raise ValueError('Each stage needs an acceptance receipt')
+        if stage.get('receipt_equals') not in (None, {'status':'ready','full_model_verified':True}):
+            raise ValueError('Only an explicit full-model runtime gate may use a ready receipt')
     return plan
 
 
@@ -62,10 +64,11 @@ def requirement_status(requirement):
     return True,'accepted'
 
 
-def accepted(path):
+def accepted(path, equals=None):
     if not Path(path).is_file(): return False
     value=read(path)
-    return value.get('status')=='complete' and value.get('accepted') is True
+    expected=equals or {'status':'complete','accepted':True}
+    return all(value.get(k)==v for k,v in expected.items())
 
 
 def snapshot(plan):
@@ -143,7 +146,7 @@ class Queue:
             for stage in self.plan['stages']:
                 if any(self.states.get(dep,{}).get('status')!='complete' for dep in stage.get('after',[])):
                     self.states[stage['name']]={'status':'blocked_dependency'}; continue
-                if accepted(stage['receipt']):
+                if accepted(stage['receipt'],stage.get('receipt_equals')):
                     self.states[stage['name']]={'status':'complete','reused':True}; continue
                 self.wait(stage['requirements'],'waiting_preparation',stage['name'])
                 if not stage.get('commands'):
@@ -155,11 +158,16 @@ class Queue:
                 self.wait(self.plan['dependencies']+stage['requirements'],'waiting_preparation',stage['name'])
                 try:
                     for i,command in enumerate(stage['commands']): self.launch(stage,command,i)
-                    if not accepted(stage['receipt']): raise ValueError('Command success without accepted scientific receipt')
+                    if not accepted(stage['receipt'],stage.get('receipt_equals')): raise ValueError('Command success without accepted scientific receipt')
                     self.states[stage['name']]={'status':'complete'}
                 except Exception as error:
                     self.states[stage['name']]={'status':'failed','error':repr(error)}
-                write(self.root/'state'/f"{stage['name']}.json",self.states[stage['name']])
+                state_path=self.root/'state'/f"{stage['name']}.json"
+                # Aggregation stages publish their scientific receipt in state/.
+                # Do not overwrite accepted/evidence with the controller status.
+                if state_path.resolve()==Path(stage['receipt']).resolve():
+                    state_path=self.root/'state'/f"process-{stage['name']}.json"
+                write(state_path,self.states[stage['name']])
             complete=all(value['status']=='complete' for value in self.states.values())
             write(self.root/'state/followups.json',dict(status='complete' if complete else 'complete_with_failures',
                 accepted=complete,stages=self.states,gpu_work_finished=True,pid=os.getpid(),time=time.time()))

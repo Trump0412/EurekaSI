@@ -36,11 +36,26 @@ def matching_teacher_canvas(qwen_canvas, frame_ids, *, qwen_patch=16, teacher_pa
     th, tw = h // qwen_patch * teacher_patch, w // qwen_patch * teacher_patch
     resized = F.interpolate(qwen_canvas.flatten(0, 1).float(), size=(th, tw),
                             mode='bilinear', align_corners=False, antialias=True)
+    # Convex interpolation can overshoot [0,1] by a few float32 ulps at white
+    # boundaries. This is NOT permission to repair normalized/invalid inputs:
+    # the original canvas above remains strictly checked and larger errors fail.
+    if not torch.isfinite(resized).all():
+        raise ValueError('Nonfinite interpolated teacher canvas')
+    low,high=float(resized.min()),float(resized.max())
+    error=max(0.,-low,high-1.)
+    tolerance=1e-6
+    if error>tolerance:
+        raise ValueError('Interpolated teacher canvas exceeds float32 roundoff tolerance')
+    range_audit=dict(policy='strict-source-range; clamp-only-finite-interpolation-roundoff',
+        tolerance=tolerance,pre_clamp_min=low,pre_clamp_max=high,max_excursion=error,
+        below_zero_count=int((resized<0).sum()),above_one_count=int((resized>1).sum()))
+    resized=resized.clamp(0.,1.)
     receipt = dict(policy='same-letterbox-normalized-coordinates-different-pixel-resolution',
         frame_ids=[list(ids) for ids in frame_ids], qwen_hw=[h,w], teacher_hw=[th,tw],
         qwen_patch=qwen_patch, teacher_patch=teacher_patch,
         patch_grid=[h//qwen_patch,w//qwen_patch], merged_grid=[h//(2*qwen_patch),w//(2*qwen_patch)],
-        temporal_group=1, interpolation='bilinear-antialias-align_corners_false')
+        temporal_group=1, interpolation='bilinear-antialias-align_corners_false',
+        interpolation_range_audit=range_audit)
     return resized.reshape(b,t,c,th,tw), receipt
 
 

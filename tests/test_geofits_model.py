@@ -3,9 +3,10 @@ import pytest
 import torch
 from transformers import Qwen3VLConfig
 from spatial_intelligence.geofits_model import GeoFitsQwen3VLForConditionalGeneration,load_geofits_model
+from spatial_intelligence.geofits_recipe import architecture_for_variant,VARIANTS
 
 
-def setup():
+def setup(variant='full'):
     torch.set_num_threads(4);torch.manual_seed(123)
     config=Qwen3VLConfig(text_config=dict(vocab_size=48,hidden_size=32,intermediate_size=48,
         num_hidden_layers=4,num_attention_heads=4,num_key_value_heads=2,head_dim=8,
@@ -19,6 +20,7 @@ def setup():
     config.geofits_config=dict(hidden_size=32,vggt_width=4,pi3_width=6,temporal_bottleneck=4,
         temporal_group_size=1,temporal_group_reduction='mean',timestamp_encoding='order_only_sincos',
         pooling='average_2x2',retrieval_width=8)
+    config.geofits_config=architecture_for_variant(config.geofits_config,variant)
     model=GeoFitsQwen3VLForConditionalGeneration(config)
     ids=torch.tensor([[1,4,6,5,4,6,5,12,13,2]])
     inputs=dict(input_ids=ids,attention_mask=torch.ones_like(ids),
@@ -28,11 +30,14 @@ def setup():
     features=[dict(vggt={n:torch.randn(1,2,2,2,4) for n in (11,17,23)},
         pi3={n:torch.randn(1,2,2,2,6) for n in (17,26,35)},native_grid=(2,1,1),
         visual_indices=torch.tensor([2,5]),prefix_length=8,labels=inputs['labels'][0])]
+    if variant=='3d_only': features[0]['pi3']={}
+    if variant=='4d_only': features[0]['vggt']={}
     return model,inputs,features
 
 
-def test_all_native_and_fusion_parameters_update_with_checkpointing():
-    model,inputs,features=setup();model.train()
+@pytest.mark.parametrize('variant',VARIANTS)
+def test_all_native_and_fusion_parameters_update_with_checkpointing(variant):
+    model,inputs,features=setup(variant);model.train()
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant':False})
     before={n:p.detach().clone() for n,p in model.named_parameters()}
     optimizer=torch.optim.SGD(model.parameters(),lr=.1)
@@ -40,13 +45,16 @@ def test_all_native_and_fusion_parameters_update_with_checkpointing():
         output=model(**inputs,use_cache=False);output.loss.backward()
     optimizer.step()
     changed=[n for n,p in model.named_parameters() if not torch.equal(before[n],p)]
-    for group in ('language_model','visual.blocks','geofits.bank.projectors','geofits.bank.temporal','geofits.layers'):
+    groups=['language_model','visual.blocks','geofits.bank.projectors','geofits.layers']
+    if variant!='3d_only': groups.append('geofits.bank.temporal')
+    for group in groups:
         assert any(group in n for n in changed),group
     assert all(p.requires_grad for p in model.parameters())
 
 
-def test_answer_blind_prefix_and_saved_generation(tmp_path):
-    model,inputs,features=setup();model.eval()
+@pytest.mark.parametrize('variant',VARIANTS)
+def test_answer_blind_prefix_and_saved_generation(tmp_path,variant):
+    model,inputs,features=setup(variant);model.eval()
     with model.feature_context(features),torch.no_grad(): expected=model(**inputs,use_cache=False).logits
     altered=dict(inputs);altered['input_ids']=inputs['input_ids'].clone();altered['input_ids'][0,8:]=torch.tensor([20,21])
     with model.feature_context(features),torch.no_grad(): actual=model(**altered,use_cache=False).logits

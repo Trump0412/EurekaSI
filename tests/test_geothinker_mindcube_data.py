@@ -25,6 +25,7 @@ def test_final_gate_never_accepts_partial_component(tmp_path):
     assert not module.aggregate({'component_ready': True}, {}, {})['ready_for_training']
     merged = dict.fromkeys(['ready_for_training', 'media_verified', 'leakage_checked',
                             'global_scene_split_verified', 'six_sources_verified'], True)
+    merged['status']='prepared'
     assert not module.aggregate({}, {}, merged)['ready_for_training']
     for key in ['train_manifest', 'validation_manifest']:
         path = tmp_path / key
@@ -39,7 +40,7 @@ def test_waiver_is_bounded_and_not_reported_clean(tmp_path):
     spec = importlib.util.spec_from_file_location('watch_six_waiver', Path(__file__).parents[1] / 'scripts/watch-six-source-readiness.py')
     module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     p = tmp_path/'train.jsonl';p.write_text('{}\n')
-    merged = dict(ready_for_training=True, media_verified=True, six_sources_verified=True,
+    merged = dict(status='prepared_with_user_waiver', ready_for_training=True, media_verified=True, six_sources_verified=True,
                   known_sources_leakage_checked=True, leakage_checked=False,
                   train_manifest=str(p), validation_manifest=str(p),
                   contamination_waiver=dict(authorized=True, scope='openspatial_only', scene_overlap='unknown',

@@ -21,4 +21,14 @@ def test_data_and_runtime_gate_fail_closed(tmp_path):
     plan=dict(use_lora=False,data_receipt=str(data),runtime_acceptance=str(gate),architecture={})
     assert worker.validate_plan(plan,2)['status']=='ready'
     with pytest.raises(ValueError,match='actual full-model'): worker.validate_plan(plan)
-    with pytest.raises(ValueError,match='Only explicit'): worker.validate_plan(dict(plan,variant='dense'),2)
+    with pytest.raises(ValueError,match='variant/architecture mismatch'): worker.validate_plan(dict(plan,variant='dense'),2)
+
+
+def test_all_variants_have_explicit_nonidentical_architectures():
+    from spatial_intelligence.geofits_recipe import architecture_for_variant,validate_variant_architecture,VARIANTS
+    variants=[architecture_for_variant({},variant) for variant in VARIANTS]
+    assert len({json.dumps(x,sort_keys=True) for x in variants})==6
+    for variant,architecture in zip(VARIANTS,variants):
+        assert validate_variant_architecture(architecture,variant)==architecture
+    assert variants[-1]['fusion_layers']==[3]
+    with pytest.raises(ValueError,match='Unknown'): architecture_for_variant({},'fake')

@@ -17,6 +17,34 @@ def test_common_canvas_preserves_frame_order_and_relative_patch_grid():
         matching_teacher_canvas(rgb,[['same','same']])
 
 
+def test_real_white_boundary_interpolation_roundoff_is_bounded_and_recorded():
+    rgb=torch.ones(1,2,3,448,448)
+    rgb[:,:,:,:20]=0
+    raw=torch.nn.functional.interpolate(rgb.flatten(0,1),size=(392,392),mode='bilinear',
+        align_corners=False,antialias=True)
+    out,receipt=matching_teacher_canvas(rgb,[['a','b']])
+    audit=receipt['interpolation_range_audit']
+    assert out.min()>=0 and out.max()<=1 and torch.isfinite(out).all()
+    assert audit['above_one_count']==int((raw>1).sum())
+    assert audit['below_zero_count']==int((raw<0).sum())
+    assert audit['max_excursion']<=1e-6
+    assert torch.equal(out.flatten(0,1),raw.clamp(0,1))
+
+
+@pytest.mark.parametrize('value',[1.00001,-.00001,float('nan')])
+def test_large_or_nonfinite_interpolation_error_is_not_clamped(monkeypatch,value):
+    monkeypatch.setattr('spatial_intelligence.geofits_teachers.F.interpolate',
+        lambda *args,**kwargs:torch.full((1,3,392,392),value))
+    with pytest.raises(ValueError,match='roundoff|Nonfinite'):
+        matching_teacher_canvas(torch.zeros(1,1,3,448,448),[['a']])
+
+
+def test_normalized_source_cannot_be_repaired_by_roundoff_guard():
+    rgb=torch.zeros(1,1,3,448,448);rgb[0,0,0,0,0]=-1e-7
+    with pytest.raises(ValueError,match='unnormalized RGB'):
+        matching_teacher_canvas(rgb,[['a']])
+
+
 class FakeVGGT(nn.Module):
     patch_size=14; depth=24
     def __init__(self):

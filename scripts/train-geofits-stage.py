@@ -2,7 +2,7 @@
 
 No teacher or language LoRA. Real VGGT/Pi3 features are computed online with
 frozen teachers, never replaced by zeros. Full, registered-model save/reload is
-separate from formal benchmark acceptance. Other ablations fail closed.
+separate from formal benchmark acceptance. Each ablation changes real modules.
 """
 import argparse
 import json
@@ -28,8 +28,10 @@ def write(path, value):
 
 
 def validate_plan(plan, diagnostic_steps=0):
-    if plan.get('use_lora') is not False or plan.get('variant', 'full') != 'full':
-        raise ValueError('Only explicit full-parameter full GeoFits variant is implemented')
+    from spatial_intelligence.geofits_recipe import validate_variant_architecture
+    if plan.get('use_lora') is not False:
+        raise ValueError('Only explicit full-parameter GeoFits training is supported')
+    validate_variant_architecture(plan['architecture'],plan.get('variant','full'))
     data = read(plan['data_receipt'])
     from spatial_intelligence.followup_data_policy import validate_leakage_policy
     validate_leakage_policy(data)
@@ -42,6 +44,19 @@ def validate_plan(plan, diagnostic_steps=0):
         if gate.get('architecture') != plan['architecture']:
             raise ValueError('Runtime gate belongs to a different GeoFits architecture')
     return data
+
+
+def load_teachers(plan, device):
+    """Load only active frozen trunks; absent branches are not zero placeholders."""
+    from spatial_intelligence.geofits_recipe import validate_variant_architecture
+    from spatial_intelligence.geofits_teachers import load_vggt_levels,load_pi3_levels
+    architecture=validate_variant_architecture(plan['architecture'],plan.get('variant','full'))
+    loaders={'vggt':load_vggt_levels,'pi3':load_pi3_levels}
+    teachers={name:loaders[name](plan[name+'_source'],plan[name+'_weights']).to(device).eval()
+              for name in architecture['bank_sources']}
+    if any(p.requires_grad for teacher in teachers.values() for p in teacher.parameters()):
+        raise ValueError('Geometry teachers must remain frozen')
+    return teachers
 
 
 def arrange(rows, global_batch=64, seed=3407):
@@ -62,11 +77,17 @@ def feature_entries(records, inputs, model, teachers, device):
     entries = []
     image_id = model.config.image_token_id
     labels = inputs.get('labels')
+    if not isinstance(teachers,dict):
+        # Original full-only caller compatibility; variant loaders return dicts.
+        teachers=dict(zip(('vggt','pi3'),teachers))
+    expected=set(model.geofits.config.bank_sources)
+    if set(teachers)!=expected: raise ValueError('Teacher ownership differs from model bank sources')
     for i, row in enumerate(records):
         images = torch.stack([torch.from_numpy(np.asarray(canvas(path)[0]).copy()).permute(2,0,1).float()/255
                               for path in row['media']]).unsqueeze(0).to(device)
         teacher_images, receipt = matching_teacher_canvas(images, [list(map(str, row['media']))])
-        vggt = teachers[0](teacher_images); pi3 = teachers[1](teacher_images)
+        vggt = teachers['vggt'](teacher_images) if 'vggt' in teachers else {}
+        pi3 = teachers['pi3'](teacher_images) if 'pi3' in teachers else {}
         visual = (inputs['input_ids'][i] == image_id).nonzero().flatten().to(device)
         if labels is None:
             # Micro1 inference has no left padding. Evaluation adapters with
@@ -77,8 +98,14 @@ def feature_entries(records, inputs, model, teachers, device):
             supervised = (labels[i] != -100).nonzero().flatten()
             if not supervised.numel(): raise ValueError('Missing answer supervision')
             prefix = int(supervised[0])
+        timestamps=None
+        if model.geofits.config.timestamp_encoding=='normalized_linear_sincos':
+            values=row.get('timestamps')
+            if values is None or len(values)!=len(row['media']):
+                raise ValueError('Measured timestamp recipe requires one real timestamp per frame')
+            timestamps=torch.tensor([values],device=device,dtype=torch.float32)
         item = dict(vggt=vggt, pi3=pi3, visual_indices=visual, prefix_length=prefix,
-            native_grid=(len(row['media']), *receipt['merged_grid']), timestamps=None)
+            native_grid=(len(row['media']), *receipt['merged_grid']), timestamps=timestamps)
         if labels is not None: item['labels'] = labels[i].to(device)
         entries.append(item)
     return entries
@@ -91,7 +118,6 @@ def train(plan, micro=1, diagnostic_steps=0):
     from transformers import AutoProcessor, Trainer, TrainingArguments, TrainerCallback, set_seed
     from transformers.trainer_utils import get_last_checkpoint
     from spatial_intelligence.geofits_model import load_geofits_model
-    from spatial_intelligence.geofits_teachers import load_vggt_levels, load_pi3_levels
     from spatial_intelligence.georoute_inputs import RouteCollator
     from spatial_intelligence.qwen35 import completion_loss
     local = int(os.getenv('LOCAL_RANK', 0)); world = int(os.getenv('WORLD_SIZE', 1))
@@ -103,8 +129,9 @@ def train(plan, micro=1, diagnostic_steps=0):
     contract = dict(model=plan['model'], data=data, architecture=plan['architecture'], training='full_parameter_no_lora',
         micro=micro, world=world, ga=64//(world*micro), global_batch=64, seed=plan.get('seed',3407),
         lr=1e-5, epochs=1, count=count, diagnostic=bool(diagnostic_steps), max_steps=diagnostic_steps or -1,
-        teacher_inputs='shared448-letterbox-resize392', teachers='frozen VGGT11/17/23 and Pi3-17/26/35',
-        loss='sample_mean', vggt_weights=plan['vggt_weights'], pi3_weights=plan['pi3_weights'])
+        teacher_inputs='shared448-letterbox-resize392', teachers=plan['architecture'].get('bank_sources',['vggt','pi3']),
+        variant=plan.get('variant','full'),loss='sample_mean',
+        vggt_weights=plan.get('vggt_weights'), pi3_weights=plan.get('pi3_weights'))
     out.mkdir(parents=True, exist_ok=True)
     if (out/'completion.json').exists(): raise ValueError('Completed output exists; preserve it')
     if (out/'contract.json').exists() and read(out/'contract.json') != contract: raise ValueError('Changed resume contract')
@@ -120,9 +147,7 @@ def train(plan, micro=1, diagnostic_steps=0):
     if any('lora_' in n for n,_ in model.named_parameters()): raise ValueError('Unexpected LoRA parameters')
     model.requires_grad_(True); model.config.use_cache=False
     device = torch.device('cuda', local)
-    teachers = [load_vggt_levels(plan['vggt_source'],plan['vggt_weights']).to(device),
-                load_pi3_levels(plan['pi3_source'],plan['pi3_weights']).to(device)]
-    if any(p.requires_grad for teacher in teachers for p in teacher.parameters()): raise ValueError('Teacher must remain frozen')
+    teachers = load_teachers(plan,device)
     processor = AutoProcessor.from_pretrained(plan['processor'])
     class Rows(Dataset):
         def __len__(self): return len(rows)
@@ -156,8 +181,11 @@ def train(plan, micro=1, diagnostic_steps=0):
             wanted={'language':'.language_model.layers.0.self_attn.q_proj.weight',
                 'native_visual':'.visual.blocks.0.attn.qkv.weight',
                 'geometry_projection':'geofits.bank.projectors.0.weight',
-                'temporal_adapter':'geofits.bank.temporal.0.up.weight',
                 'geometry_retrieval':'geofits.layers.0.output.weight'}
+            if 'pi3' in plan['architecture'].get('bank_sources',['vggt','pi3']):
+                wanted['temporal_adapter']='geofits.bank.temporal.0.up.weight'
+            if plan['architecture'].get('gate_enabled',True):
+                wanted['geometry_gate']='geofits.layers.0.gate.2.weight'
             for key,suffix in wanted.items():
                 matches=[p for n,p in model.named_parameters() if n.endswith(suffix) and p.requires_grad]
                 if len(matches)!=1: raise ValueError('Trainable ownership mismatch '+key)
@@ -212,8 +240,30 @@ def verify_saved(plan,micro=1,diagnostic_steps=0):
     receipt=read(out/'completion.json')
     if not receipt.get('finite_loss') or not receipt.get('nonzero_update'): raise ValueError('Missing actual loss/component updates')
     resume=Path(receipt['resume_checkpoint'])
-    if not (resume/'trainer_state.json').exists() or not list(resume.glob('**/*optim*')) or not list(resume.glob('rng_state*.pth')):
-        raise ValueError('Missing optimizer/RNG/Trainer checkpoint')
+    if not (resume/'trainer_state.json').exists(): raise ValueError('Missing Trainer state')
+    world=int(receipt['contract']['world'])
+    rng_paths=[resume/('rng_state.pth' if world==1 else f'rng_state_{rank}.pth') for rank in range(world)]
+    for path in rng_paths:
+        if not path.is_file(): raise ValueError('Missing per-rank RNG checkpoint: '+path.name)
+        state=torch.load(path,map_location='cpu',weights_only=False)
+        if not all(key in state for key in ('python','numpy','cpu','cuda')):
+            raise ValueError('Incomplete per-rank RNG state')
+        del state
+    optimizer_files=list(resume.glob('**/*optim*.pt'))
+    if not optimizer_files: raise ValueError('Missing optimizer state')
+    for path in optimizer_files:
+        state=torch.load(path,map_location='cpu',weights_only=False)
+        if not isinstance(state,dict) or not any(k in state for k in ('state','optimizer_state_dict')):
+            raise ValueError('Invalid optimizer checkpoint payload')
+        del state
+    scheduler_ok=False
+    scheduler_paths=[resume/'scheduler.pt'] if (resume/'scheduler.pt').exists() else list(resume.glob('**/*model_states.pt'))
+    for path in scheduler_paths:
+        state=torch.load(path,map_location='cpu',weights_only=False)
+        scheduler=state if path.name=='scheduler.pt' else state.get('lr_scheduler')
+        scheduler_ok |= isinstance(scheduler,dict) and 'last_epoch' in scheduler
+        del state
+    if not scheduler_ok: raise ValueError('Missing saved scheduler state')
     evidence=torch.load(out/'reload-evidence.pt',map_location='cpu',weights_only=False)
     model=load_geofits_model(out/'final',dtype=torch.bfloat16,attn_implementation='sdpa').cuda().eval()
     inputs={key:value.cuda() for key,value in evidence['inputs'].items()}
@@ -225,6 +275,8 @@ def verify_saved(plan,micro=1,diagnostic_steps=0):
     receipt.update(status='complete',accepted=True,reload_verified=True,
         reload_max_logit_delta=float((logits-evidence['logits']).abs().max()),
         generation_smoke_tokens=int(output.shape[1]-inputs['input_ids'].shape[1]),
+        optimizer_rng_files_present=True,optimizer_state_files_checked=len(optimizer_files),
+        rng_ranks_checked=world,scheduler_state_present=True,
         acceptance_scope='stage update/reload only; full benchmark and exact resume trajectory remain separate')
     write(out/'completion.json',receipt)
 

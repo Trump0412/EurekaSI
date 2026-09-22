@@ -20,18 +20,41 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan',required=True);parser.add_argument('--checkpoint',required=True)
     parser.add_argument('--manifest',required=True);parser.add_argument('--output',required=True)
-    parser.add_argument('--benchmark',choices=['revsi','vsibench'],required=True)
+    parser.add_argument('--benchmark',choices=['revsi','vsibench','mmsi','mindcube_tiny','viewspatial','cvbench'],required=True)
     parser.add_argument('--world',type=int,default=1);parser.add_argument('--merge',action='store_true')
     parser.add_argument('--rgb-only',action='store_true')
     args=parser.parse_args();plan=json.loads(Path(args.plan).read_text(encoding='utf-8'))
     source=rows(args.manifest);out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     if not source or len({row['id'] for row in source})!=len(source): raise ValueError('Empty/duplicate evaluation manifest')
-    from spatial_intelligence.spatial_eval import score_prediction,summarize
+    from spatial_intelligence.followup_benchmarks import score_prediction,summarize,validate_rows
+    validate_rows(source,args.benchmark)
     if args.merge:
-        records=[row for rank in range(args.world) for row in rows(out/f'predictions.rank{rank}.jsonl')]
+        records=[];shared=None
+        for rank in range(args.world):
+            contract=json.loads((out/f'contract.rank{rank}.json').read_text(encoding='utf-8'))
+            if (contract['checkpoint']!=str(Path(args.checkpoint).resolve()) or contract['benchmark']!=args.benchmark
+                    or contract['world']!=args.world or contract['ids']!=[r['id'] for r in source]
+                    or (shared is not None and shared!=contract)):
+                raise ValueError('Changed model or shard contract')
+            shared=contract
+            if (out/f'manifest.rank{rank}.jsonl').read_bytes()!=Path(args.manifest).read_bytes():
+                raise ValueError('Changed benchmark source content')
+            shard=rows(out/f'predictions.rank{rank}.jsonl')
+            if [r['id'] for r in shard]!=[r['id'] for r in source[rank::args.world]]:
+                raise ValueError('Incomplete/duplicate/out-of-order benchmark shard')
+            records.extend(shard)
         if len(records)!=len(source) or {row['id'] for row in records}!={row['id'] for row in source}:
             raise ValueError('Incomplete/duplicate benchmark coverage')
-        report=summarize([row['score'] for row in records],args.benchmark)
+        by_id={r['id']:r for r in records}
+        scored=[]
+        for row in source:
+            prediction=by_id[row['id']]
+            truncated=prediction.get('truncated',prediction.get('score',{}).get('extraction',{}).get('truncated',False))
+            scored.append(score_prediction(dict(row,ground_truth=row.get('ground_truth',row.get('answer'))),
+                prediction['response'],args.benchmark,truncated))
+        report=summarize(scored,args.benchmark)
+        if args.benchmark not in ('revsi','vsibench') and not report.get('complete_benchmark'):
+            raise ValueError('Incomplete official benchmark coverage')
         report.update(status='complete',accepted=True,checkpoint=args.checkpoint,
             protocol='Independent-image letterbox448/tagged512; not native-video leaderboard parity')
         (out/'completion.json').write_text(json.dumps(report,indent=2),encoding='utf-8');return
@@ -82,7 +105,7 @@ def main():
             text=processor.decode(completion,skip_special_tokens=True)
             eos=model.generation_config.eos_token_id;eos=[eos] if isinstance(eos,int) else eos or []
             truncated=len(completion)>=512 and int(completion[-1]) not in eos
-            record=dict(id=row['id'],response=text,tokens=completion.tolist(),frames=len(row['media']),
+            record=dict(id=row['id'],response=text,tokens=completion.tolist(),frames=len(row['media']),truncated=truncated,
                 graph_edges=None if graph is None else graph.src.numel(),
                 score=score_prediction(normalized,text,args.benchmark,truncated))
             stream.write(json.dumps(record,ensure_ascii=False)+'\n');stream.flush()

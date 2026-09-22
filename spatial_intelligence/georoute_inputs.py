@@ -63,6 +63,10 @@ class GraphCache:
     def __init__(self,root,teacher,identity,config,device):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
         self.teacher=teacher;self.identity=identity;self.config=dict(config);self.device=device
+        # Storage policy is NOT graph semantics: changing a quota must not
+        # invalidate existing graph identities or write duplicate graphs.
+        self.cache_max_bytes=self.config.pop('cache_max_bytes',512*1024**3)
+        self.cache_min_free_bytes=self.config.pop('cache_min_free_bytes',100*1024**3)
 
     def get(self,row):
         import torch
@@ -78,12 +82,12 @@ class GraphCache:
             if saved['contract']!=contract: raise ValueError('Graph cache identity mismatch')
             return RouteGraph(**saved['graph']).validate()
         graph=self.build(row)
-        import os,uuid
-        temp=path.with_suffix('.'+str(os.getpid())+'.'+uuid.uuid4().hex+'.tmp')
-        torch.save(dict(contract=contract,graph=vars(graph)),temp)
-        # Equivalent concurrent builders have identical source contracts; no hot
-        # mutation of checkpoints or media is permitted while this cache is used.
-        os.replace(temp,path)
+        import io
+        from .cache_capacity import publish_cache
+        payload=io.BytesIO()
+        torch.save(dict(contract=contract,graph=vars(graph)),payload)
+        publish_cache(self.root,path.name,payload.getvalue(),max_bytes=self.cache_max_bytes,
+                      min_free_bytes=self.cache_min_free_bytes)
         return graph
 
     def build(self,row):

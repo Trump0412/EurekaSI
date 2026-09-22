@@ -4,6 +4,30 @@ This worker is a local full-parameter adaptation. It is not a declaration that
 the private paper has been reproduced or that released-model GPU training passed.
 It leaves the prior paper's training and RFT snapshots unchanged.
 
+## Current implementation update
+
+All six variants now have distinct executable architectures: `full`, `3d_only`,
+`4d_only`, `dense`, `no_gate`, and `single_layer` (decoder layer **3**, not 1).
+Use `architecture_for_variant` in `spatial_intelligence/geofits_recipe.py`;
+inactive teachers/modules are not loaded or trained. Dense uses the same regional
+query with softmax over all entries, an explicit choice where the manuscript
+does not uniquely specify its formula. Language, native RGB and active fusion
+parameters train fully; the external teachers remain frozen. This is active
+geometry retrieval, not annotation acquisition/sample-selection active learning.
+
+`verify-geofits-runtime.py` runs separate real single-image, multi-image and
+32-frame update/save/reload gates before each variant's formal training.
+`evaluate-geofits.py` keeps the custom model and real teacher path intact, saves
+per-example answers, and emits eval-only gate/bank/residual telemetry. ReVSI,
+VSI, MMSI, MindCube-Tiny, ViewSpatial and CV-Bench are supported through explicit
+scorers. CV-Bench is source-weighted, not a pooled average. The strict final-letter
+parser and image-input protocol are declared adaptations, not exact official
+inference parity. SITE is a separate GeoRoute requirement, not one of the four
+complementary benchmarks in the SpatialFit manuscript.
+
+See [implementation acceptance](GEOFITS_IMPLEMENTATION_ACCEPTANCE.md) for current
+tests, deployment boundaries and remaining real-GPU acceptance.
+
 ## Entry points
 
 ```bash
@@ -23,10 +47,10 @@ Architecture fields: `hidden_size` equal to the native language width,
 `vggt_width:2048`, `pi3_width:1024`, `temporal_bottleneck:256`,
 `temporal_group_size:1`, `temporal_group_reduction:"mean"`,
 `timestamp_encoding:"order_only_sincos"`, `pooling:"average_2x2"`,
-and explicitly chosen `retrieval_width`.
+and explicitly chosen `retrieval_width`, plus variant fields from the recipe helper.
 Selected teacher layers are VGGT 11/17/23 and Pi3 17/26/35. Fusion follows
-decoder blocks 1/2/3, with six entries, TopK2 and sigmoid gate. Other ablation
-names currently raise an error; they must not silently use the full model.
+decoder blocks 1/2/3, with six entries, TopK2 and sigmoid gate in the full model.
+Ablations alter only their declared source/retrieval/gate/layer factor.
 
 Outputs: `$ROOT/diagnostic/micro1/` or `$ROOT/formal/micro1/`, including locked
 `contract.json`, `live-eta.json`, resumable Trainer checkpoints, `final/`,
@@ -58,9 +82,10 @@ initialize a formal experiment.
 
 ## Stage gates and remaining scope
 
-The data receipt must declare ready, verified media, leakage checked, and point
-to an audited train manifest. Merely downloading OpenSpatial ARKitScenes100K
-does not satisfy scene/provenance acceptance. Formal execution additionally
+The data receipt must declare ready, verified media, and point to an audited
+train manifest. It must pass the shared leakage policy: checked isolation or
+the explicit OpenSpatial-only unknown-scene authorization, never a blanket waiver.
+Merely downloading media does not satisfy acceptance. Formal execution additionally
 requires independent `runtime_acceptance` with ready/full_model_verified and
 the exact architecture; the worker does not fabricate that receipt.
 
@@ -70,8 +95,8 @@ the custom registered model, compare logits and generate real continuation
 tokens before the stage receipt becomes accepted. Always load through
 `load_geofits_model`: a vanilla Qwen loader would discard the geometry model.
 The verifier checks optimizer/RNG checkpoint files but does **not** establish
-exact resumed-trajectory parity. Full distributed real-model validation,
-ablation support and benchmark adapters remain additional gates.
+exact resumed-trajectory parity. Full distributed real-model validation and
+actual benchmark execution remain additional gates; CPU tests are not substitutes.
 
 Tests: pure scheduling/gate tests and tiny real-Qwen integration are separate
 from a released-model/multi-GPU acceptance. Never turn passing CPU tests into

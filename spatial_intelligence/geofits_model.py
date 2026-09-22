@@ -16,7 +16,7 @@ from .geofits import GeoFitsConfig, GeoFitsFusion
 
 def parse_config(settings):
     settings = dict(settings)
-    for key in ('vggt_levels', 'pi3_levels', 'fusion_layers'):
+    for key in ('vggt_levels', 'pi3_levels', 'fusion_layers', 'bank_sources'):
         if key in settings:
             settings[key] = tuple(settings[key])
     return GeoFitsConfig(**settings)
@@ -36,10 +36,11 @@ class GeoFitsQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         self._features = None
         self._contexts = None
         self._cached_decode = False
+        self._diagnostics = None
         self._geometry_handles = [self.model.language_model.register_forward_pre_hook(
             self._capture_original, with_kwargs=True)]
-        self._geometry_handles.extend(self.model.language_model.layers[i].register_forward_hook(
-            self._fusion_hook(i+1)) for i in range(3))
+        self._geometry_handles.extend(self.model.language_model.layers[layer-1].register_forward_hook(
+            self._fusion_hook(layer)) for layer in cfg.fusion_layers)
 
     def _apply(self, fn, recurse=True):
         # Native rotary frequencies are nonpersistent: do not quantize constants
@@ -50,6 +51,33 @@ class GeoFitsQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         for module, name, value in constants:
             module._buffers[name] = value.to(device=module._buffers[name].device)
         return result
+
+    @contextmanager
+    def fusion_diagnostics(self):
+        """Opt-in eval/no-grad scalars; no raw activation tensors are retained.
+
+        Usage: ``with model.fusion_diagnostics() as summary, torch.no_grad():``
+        followed by the usual feature_context + generate. The returned dictionary
+        is populated per fusion layer and survives context exit. Recording while
+        training or with autograd enabled fails, so checkpoint recomputation
+        cannot silently double-count. Cached decode has no fusion event.
+        """
+        if self.training or self._diagnostics is not None:
+            raise ValueError('Fusion diagnostics require nonnested eval context')
+        summary={'scope':'eval prefill only; no training/gradient-checkpoint recording',
+                 'entry_labels':[f'{source}:{level}' for source,level in self.geofits.bank.entry_specs],
+                 'layers':{}}
+        self._diagnostics=summary
+        try: yield summary
+        finally: self._diagnostics=None
+
+    def _record_diagnostics(self, layer, current, fused, diagnostics):
+        if self._diagnostics is None: return
+        if self.training or torch.is_grad_enabled():
+            raise ValueError('Fusion diagnostics require eval and no_grad to avoid recompute double-counting')
+        from .geofits_telemetry import accumulate_fusion_statistics
+        layers=self._diagnostics['layers']
+        layers[str(layer)]=accumulate_fusion_statistics(layers.get(str(layer)),current,fused,diagnostics)
 
     @contextmanager
     def feature_context(self, features):
@@ -109,8 +137,13 @@ class GeoFitsQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             if self._contexts is None:
                 raise ValueError('Missing answer-blind prefill context')
             hidden = output[0] if isinstance(output, tuple) else output
-            pieces = [self.geofits(hidden[i:i+1], layer=layer, **context)[0]
-                      for i, context in enumerate(self._contexts)]
+            pieces=[]
+            for i,context in enumerate(self._contexts):
+                result,diagnostics=self.geofits(hidden[i:i+1],layer=layer,**context)
+                if self._diagnostics is not None:
+                    indices=context['visual_indices'][0]
+                    self._record_diagnostics(layer,hidden[i:i+1,indices],result[:,indices],diagnostics)
+                pieces.append(result)
             fused = torch.cat(pieces, dim=0)
             return (fused, *output[1:]) if isinstance(output, tuple) else fused
         return hook

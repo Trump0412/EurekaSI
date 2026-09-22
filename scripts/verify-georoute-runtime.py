@@ -31,8 +31,8 @@ def write(path, value):
 
 def preflight(plan, dependencies):
     from spatial_intelligence.followup_data_policy import validate_leakage_policy
-    if plan.get('variant') not in ('final_only', 'post_merger'):
-        raise ValueError('This gate supports final_only and post_merger only')
+    if plan.get('variant') not in ('full','no_tip','one_stb','final_only','post_merger'):
+        raise ValueError('Unknown GeoRoute variant')
     if plan.get('use_lora') is not False:
         raise ValueError('Explicit full-parameter recipe required')
     data = read(plan['data_receipt'])
@@ -105,6 +105,22 @@ def run(command, log, env, timeout):
                     child.wait()
 
 
+def accepted_effect(report):
+    """Connectivity floor, NOT a requirement that large changes imply accuracy."""
+    graph=report.get('graph', {})
+    if graph.get('edges',0)<=0:
+        raise ValueError('No real cross-frame graph support in influence probe')
+    comparisons=report.get('tensor_comparisons', {})
+    transmitted=[v for k,v in comparisons.items() if k.endswith('.post_exit')]
+    if not transmitted or not any(v.get('changed_elements',0)>0 for v in transmitted):
+        raise ValueError('STB influence vanished at every merged visual exit')
+    if report.get('next_token_logits',{}).get('changed_elements',0)<=0:
+        raise ValueError('No observable BF16 output influence; do not silently accept a dead branch')
+    return dict(status='measured_nonzero',
+        weak_effect_warning=max(v.get('relative_delta_l2') or 0 for v in transmitted)<1e-3,
+        warning_threshold=1e-3,threshold_scope='engineering warning, not a paper hyperparameter or accuracy claim')
+
+
 def execute(args):
     plan = read(args.plan)
     if Path(args.receipt).exists():
@@ -139,7 +155,7 @@ def execute(args):
             diagnostic_tip_receipt=str((subset / 'diagnostic/tip/micro1/completion.json').resolve()))
         worker_plan = subset / 'plan.json'
         write(worker_plan, worker)
-        for phase in ('tip', 'sft'):
+        for phase in (('sft',) if plan['variant']=='no_tip' else ('tip', 'sft')):
             if args.yield_request and Path(args.yield_request).is_file():
                 write(output/'yield.json',dict(status='yielded_to_priority',full_model_verified=False,time=time.time()))
                 raise SystemExit(75)
@@ -164,6 +180,14 @@ def execute(args):
                     or contract.get('global_batch') != 64):
                 raise ValueError('Runtime evidence belongs to a different variant or allocation')
             stages.append(dict(subset=name, stage=phase, receipt=str(receipt.resolve()), row_ids=[row['id'] for row in rows]))
+        effect_path=subset/'sft-effect-bf16.json'
+        stage_root=subset/'diagnostic/sft/micro1'
+        run([sys.executable,str(REPO/'scripts/audit-georoute-effect.py'),
+            '--checkpoint',str(stage_root/'final'),'--bundle',str(stage_root/'reload-evidence.pt'),
+            '--output',str(effect_path),'--device','cuda:0','--dtype','bfloat16'],
+            subset/'effect.log',env,args.timeout_seconds)
+        effect=accepted_effect(read(effect_path))
+        stages.append(dict(subset=name,stage='bf16_influence',receipt=str(effect_path.resolve()),**effect))
     result = dict(status='ready', full_model_verified=True, variant=plan['variant'],
         architecture=plan['architecture'], graph=plan['graph'], actual_32frame_pressure_verified=True,
         model=plan['model'], data_receipt=plan['data_receipt'], stages=stages, gpus=gpus,

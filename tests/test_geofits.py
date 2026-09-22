@@ -8,6 +8,8 @@ from torch.utils.checkpoint import checkpoint
 from spatial_intelligence.geofits import (GeoFitsConfig, GeoFitsFusion, GeometryBank,
     FrozenGeometryTeacher, FusionContext, install_geofits, relative_time,
     enable_full_parameter_training)
+from spatial_intelligence.geofits_recipe import architecture_for_variant,VARIANTS
+from dataclasses import asdict
 
 
 def config(**changes):
@@ -152,3 +154,31 @@ def test_real_qwen_deepstack_prefill_cache_matches_full_teacher_forcing():
                         attention_mask=torch.ones(1, 11), use_cache=True)
     assert torch.allclose(full.last_hidden_state[:, -1:], decoded.last_hidden_state, atol=1e-5)
     hooks.remove()
+
+
+@pytest.mark.parametrize('variant',VARIANTS)
+def test_real_structural_ablation_bank_gate_and_gradients(variant):
+    settings=architecture_for_variant(asdict(config()),variant)
+    for key in ('bank_sources','fusion_layers'): settings[key]=tuple(settings[key])
+    cfg=GeoFitsConfig(**settings);module=GeoFitsFusion(cfg)
+    v,p=features()
+    if 'vggt' not in cfg.bank_sources: v={}
+    if 'pi3' not in cfg.bank_sources: p={}
+    bank=module.bank(v,p,torch.tensor([[0.,1.]]),native_grid=(2,2,2))
+    assert bank.shape[2]==3*len(cfg.bank_sources)
+    assert len(module.bank.projectors)==bank.shape[2]
+    assert len(module.bank.temporal)==(3 if 'pi3' in cfg.bank_sources else 0)
+    assert len(module.layers)==len(cfg.fusion_layers)
+    hidden=torch.randn(1,12,8,requires_grad=True);ctx=context(bank)
+    out,diag=module(hidden,ctx.original_visual,bank,visual_indices=ctx.visual_indices,
+        question_indices=ctx.question_indices,prefix_lengths=ctx.prefix_lengths,
+        labels=ctx.labels,layer=cfg.fusion_layers[0])
+    assert ((diag['weights']>0).sum(-1)==(bank.shape[2] if variant=='dense' else 2)).all()
+    if variant=='no_gate':
+        assert not any('gate' in name for name,_ in module.named_parameters())
+        assert torch.equal(diag['gate'],torch.ones_like(diag['gate']))
+    out.square().mean().backward()
+    assert all(parameter.grad is not None for parameter in module.bank.parameters())
+    if variant=='3d_only':
+        with pytest.raises(ValueError,match='levels'): module.bank(v,features()[1],torch.tensor([[0.,1.]]),native_grid=(2,2,2))
+    if variant=='single_layer': assert cfg.fusion_layers==(3,)

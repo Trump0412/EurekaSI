@@ -51,3 +51,13 @@ def test_receipt_rejects_placeholder_or_missing_updates(tmp_path):
         module.accepted_stage(p,'sft')
     v['component_updates']['routing_exit3']=True;v['diagnostic']=False;save(p,v)
     with pytest.raises(ValueError):module.accepted_stage(p,'sft')
+
+
+def test_nonzero_gradient_is_not_effect_acceptance():
+    report=dict(graph=dict(edges=10),tensor_comparisons={'exit3.post_exit':dict(changed_elements=0,relative_delta_l2=0)},
+        next_token_logits=dict(changed_elements=1))
+    with pytest.raises(ValueError,match='vanished'):module.accepted_effect(report)
+    report['tensor_comparisons']['exit3.post_exit'].update(changed_elements=1,relative_delta_l2=1e-5)
+    assert module.accepted_effect(report)['weak_effect_warning']
+    report['next_token_logits']['changed_elements']=0
+    with pytest.raises(ValueError,match='output influence'):module.accepted_effect(report)

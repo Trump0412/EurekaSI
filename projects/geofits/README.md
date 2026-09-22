@@ -37,6 +37,8 @@ SFT一epoch、AdamW LR1e-5、global64、warmup3%、cosine、bf16、weight_decay0
 
 ## 当前实现边界
 
+2026-09-22 更新：六个变体现在都有独立执行架构；训练、重载、真实教师推理、六项评测入口及逐题融合统计已接通。单层消融只用 decoder 第3层；dense 的完整bank softmax是显式适配。CPU测试通过不等于完整模型GPU验收，部署与剩余门见[实现验收说明](../../docs/GEOFITS_IMPLEMENTATION_ACCEPTANCE.md)。下文保留此前边界背景。
+
 `spatial_intelligence/geofits.py`已实现六entry bank、时间adapter、TopK2、三层门控、显式fusion context。CPU回归含真实tiny Qwen decoder、DeepStack、gradient checkpointing、prefill/KV一致性。
 
 这些不等于完整模型可训：真实双教师多层提取/网格、完整HF注册保存重载、分布式全参数更新、所有benchmark适配仍需逐项验收。GeoFits阶段在这些证据不足时必须停在准备门，不能套用前一篇LoRA RFT worker冒充实现。

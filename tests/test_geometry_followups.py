@@ -57,3 +57,17 @@ def test_command_failure_blocks_dependent_without_starting_it(tmp_path,monkeypat
     queue.execute()
     assert queue.states['route']['status']=='failed'
     assert queue.states['fits']['status']=='blocked_dependency'
+
+
+def test_controller_does_not_overwrite_scientific_phase_receipt(tmp_path,monkeypatch):
+    if __import__('os').name=='nt':pytest.skip('Linux flock integration')
+    value=plan();value['root']=str(tmp_path);value['stages']=value['stages'][:1]
+    stage=value['stages'][0];stage['receipt']=str(tmp_path/'state/route.json')
+    queue=module.Queue(value)
+    monkeypatch.setattr(queue,'wait',lambda *a,**kw:None)
+    monkeypatch.setattr(queue,'idle',lambda:True)
+    def launch(stage,*args):module.write(stage['receipt'],dict(status='complete',accepted=True,evidence=['actual']))
+    monkeypatch.setattr(queue,'launch',launch)
+    queue.execute()
+    assert module.read(stage['receipt'])['accepted'] is True
+    assert module.read(tmp_path/'state/process-route.json')['status']=='complete'

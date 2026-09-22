@@ -42,6 +42,7 @@
     "strength_protocol": {"alpha_init": 0.0, "learnable_alpha": true, "formal_multiplier": 1.0, "diagnostic_multipliers": [0.0, 0.5, 1.0, 2.0], "selection": "Validation only; shared protocol across five arms; never select on visual contrast or test score"}
   },
   "geofits": {
+    "benchmarks": ["vsibench", "revsi", "mmsi", "mindcube_tiny", "viewspatial", "cvbench"],
     "vggt_levels": [11, 17, 23], "pi3_levels": [17, 26, 35],
     "vggt_feature_width": 2048, "pi3_feature_width": 1024,
     "fusion_layers_one_based": [1, 2, 3], "top_k": 2,
