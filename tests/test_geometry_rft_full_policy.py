@@ -4,7 +4,8 @@ import pytest
 import torch
 from torch import nn
 from spatial_intelligence.geometry_rft import (FULL_SCOPE,configure_full_policy,
-    save_policy,restore_full_policy,reference_context,CPUStateAdamW,policy_base)
+    save_policy,restore_full_policy,reference_context,CPUStateAdamW,policy_base,
+    match_reference_precision,rft_autocast)
 
 
 class Base(nn.Module):
@@ -16,6 +17,29 @@ class Base(nn.Module):
         self.geometry_backbone=nn.Linear(3,3)
         self.geometry_adapter=nn.Linear(3,3)
         self.lm_head=nn.Linear(3,3)
+
+
+def test_no_grad_rollout_does_not_poison_checkpointed_backward():
+    from torch.utils.checkpoint import checkpoint
+    model=nn.Sequential(nn.Linear(3,8),nn.SiLU(),nn.Linear(8,3))
+    x=torch.randn(2,3,requires_grad=True)
+    with rft_autocast('cpu'):
+        assert not torch.is_autocast_cache_enabled()
+        with torch.no_grad(): model(x)
+        checkpoint(model,x,use_reentrant=False).float().square().mean().backward()
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum()>0 for p in model.parameters())
+
+
+def test_reference_precision_preserves_fixed_values_and_independence():
+    reference=Base().bfloat16().requires_grad_(False)
+    before={n:p.float().clone() for n,p in reference.named_parameters()}
+    actor=configure_full_policy(Base().bfloat16())
+    match_reference_precision(reference,actor)
+    for name,p in reference.named_parameters():
+        assert p.dtype==dict(actor.named_parameters())[name].dtype
+        assert torch.equal(p.float(),before[name])
+        assert not p.requires_grad
+        assert p.data_ptr()!=dict(actor.named_parameters())[name].data_ptr()
 
 
 def test_scope_and_exact_fp32_save_reload(tmp_path):

@@ -54,6 +54,16 @@ def build(bindings,scientific):
                     '--gpus',','.join(map(str,node['gpus'])),'--dependency-receipt',bindings['dependencies'][0]['path'],
                     '--authorize-run']],receipt=str(runtime),receipt_equals=dict(status='ready',full_model_verified=True)))
             prior=[gate_name]
+            if variant!='no_tip':
+                support_root=variant_root/'tip-support'
+                worker['tip_support_receipt']=str(support_root/'completion.json')
+                support_args=['{code}/scripts/prepare-tip-support.py','--plan',worker_path,'--output',str(support_root)]
+                support_name=f'route-{variant}-tip-support'
+                stages.append(dict(name=support_name,study='georoute',use_lora=False,after=prior,
+                    requirements=[data_gate,requirement(runtime,status='ready',full_model_verified=True)],
+                    commands=[train_prefix+support_args,['{python}']+support_args+['--merge']],
+                    receipt=str(support_root/'completion.json'),receipt_equals={'status':'complete'}))
+                prior=[support_name]
             for phase in (['sft'] if variant in ('matched_rgb_sft','no_tip') else ['tip','sft']):
                 name=f'route-{variant}-{phase}'
                 args=['{code}/scripts/train-georoute-stage.py','--plan',worker_path,'--stage',phase,'--micro','1']

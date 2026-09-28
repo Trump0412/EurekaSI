@@ -7,6 +7,20 @@ def wrap(answer="A", observation="left right above", transition="move forward ro
 
 
 class RewardTests(unittest.TestCase):
+    def test_independent_answer_version_is_strict_and_gold_blind(self):
+        from spatial_intelligence.geometry_rft_reward import RewardConfig
+        cfg=RewardConfig(version='geopsro-independent-answer-v3')
+        good=score_response('C','C',choices={'A':'one','C':'two'},config=cfg)
+        self.assertEqual((good['answer'],good['structure'],good['words'],good['total']),(1.,0.,0.,1.))
+        self.assertEqual(score_response('C','A',config=cfg)['parsed_answer'],'C')
+        self.assertEqual(score_response('0.6','0.6',task_type='numeric',config=cfg)['answer'],1.)
+        for text in ('C or A','Answer is C','<answer>C','<answer>C</answer><answer>A</answer>','0.6 meters'):
+            self.assertEqual(score_response(text,'C',config=cfg)['total'],0.)
+        self.assertEqual(score_response('C','C',truncated=True,config=cfg)['total'],0.)
+        self.assertEqual(score_response('C','C',config=RewardConfig(version='geopsro-lexicon-strict-v2'))['total'],0.)
+        self.assertEqual(score_response(wrap(),'A',config=cfg),
+                         dict(score_response(wrap(),'A',config=RewardConfig(version='geopsro-lexicon-strict-v2')),reward_version=cfg.version))
+
     def test_exact_total(self):
         result = score_response(wrap(), "A")
         self.assertEqual(result["total"], 1.55)

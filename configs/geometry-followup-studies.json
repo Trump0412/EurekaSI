@@ -29,7 +29,7 @@
     "geofits_grid": "Same letterbox field of view resized to392 for patch14 teachers; Qwen448/patch16"
   },
   "georoute": {
-    "architecture": {"exits": [5, 11, 17, 23], "bottleneck": 256, "alpha_init": 0.0,
+    "architecture": {"exits": [5, 11, 17, 23], "bottleneck": 256, "alpha_init": 0.0, "transport_reduction": "segment_fp32_v1",
       "blocks_per_exit": 2, "active_exits": [0, 1, 2, 3], "placement": "pre"},
     "graph": {"side": 448, "visibility_min": 0.5, "confidence_min": 0.5,
       "topk": 8, "query_chunk": 128, "duplicate_rule": "maximum",

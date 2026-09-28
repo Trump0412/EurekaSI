@@ -96,7 +96,11 @@ def main():
                 except subprocess.TimeoutExpired:
                     import signal
                     os.killpg(child.pid, signal.SIGTERM)
-                    child.wait(timeout=30)
+                    try:
+                        child.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait()
                     raise
         failures = [n for n in missing if not (staging/args.folder/n).is_file()
                     or not size_matches((staging/args.folder/n).stat().st_size, files[n])]

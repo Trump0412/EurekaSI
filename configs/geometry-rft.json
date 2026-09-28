@@ -27,7 +27,7 @@
     "freeze_native_rgb": true,
     "freeze_vggt": true,
     "reward": {
-      "version": "geopsro-lexicon-strict-v2",
+      "version": "geopsro-independent-answer-v3",
       "tau": 3,
       "structure_weight": 0.5,
       "words_weight": 0.05

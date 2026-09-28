@@ -26,14 +26,14 @@ def write(path,value):
     temp=path.with_suffix('.tmp');temp.write_text(json.dumps(value,indent=2),encoding='utf-8');temp.replace(path)
 
 
-def schedule(rows,stage,global_batch=64,replay_every=15,seed=3407):
+def schedule(rows,stage,global_batch=64,replay_every=15,seed=3407,tip_ids=None):
     """One deterministic instruction pass; replay is counted in OPTIMIZER batches.
 
     Tail padding is explicit. Different micro/world choices preserve the exact
     scheduled stream when world*micro divides the global batch.
     """
     rng=random.Random(seed);ordered=list(rows);rng.shuffle(ordered)
-    tip=[row for row in ordered if len(row['media'])>1]
+    tip=[row for row in ordered if len(row['media'])>1 and (tip_ids is None or row['id'] in tip_ids)]
     if stage=='tip': ordered=tip
     if not ordered: raise ValueError('No eligible rows')
     original=len(ordered)
@@ -79,7 +79,11 @@ def train(plan,stage,micro,diagnostic_steps=0,pause_request=None):
     if global_batch%(world*micro): raise ValueError('Global batch64 must divide world*micro')
     source=[json.loads(line) for line in Path(data['train_manifest']).read_text(encoding='utf-8').splitlines() if line]
     if len({row['id'] for row in source})!=len(source): raise ValueError('Duplicate training IDs')
-    arranged,count=schedule(source,stage,global_batch,plan.get('replay_every',15) if use_tip else 0,plan.get('seed',3407))
+    eligibility=read(plan['tip_support_receipt']) if use_tip else None
+    if eligibility and (eligibility.get('status')!='complete' or eligibility['contract']['graph']!=plan['graph']):
+        raise ValueError('Actual graph support audit required for TIP')
+    tip_ids=set(eligibility['eligible_ids']) if eligibility else None
+    arranged,count=schedule(source,stage,global_batch,plan.get('replay_every',15) if use_tip else 0,plan.get('seed',3407),tip_ids)
     out=Path(plan['root'])/('diagnostic' if diagnostic_steps else 'formal')/stage/f'micro{micro}'
     out.mkdir(parents=True,exist_ok=True)
     initial=plan['model'] if stage=='tip' or not use_tip else (
@@ -95,7 +99,7 @@ def train(plan,stage,micro,diagnostic_steps=0,pause_request=None):
     contract=dict(stage=stage,variant=plan.get('variant','full'),initial_model=initial,training='full_parameter_no_lora',count=count,micro=micro,world=world,
         ga=64//(world*micro),global_batch=64,seed=plan.get('seed',3407),lr=1e-5,warmup=.03,weight_decay=0.,
         loss='sample_mean',diagnostic=bool(diagnostic_steps),max_steps=diagnostic_steps or -1,
-        data=data,architecture=plan['architecture'],graph=plan['graph'])
+        data=data,architecture=plan['architecture'],graph=plan['graph'],tip_support_receipt=plan.get('tip_support_receipt'))
     if (out/'contract.json').exists() and read(out/'contract.json')!=contract: raise ValueError('Changed resume contract')
     if (out/'completion.json').exists(): raise ValueError('Completed run exists; do not overwrite')
     if int(os.getenv('RANK',0))==0: write(out/'contract.json',contract)
@@ -233,8 +237,12 @@ def train(plan,stage,micro,diagnostic_steps=0,pause_request=None):
         logits=trainer.model_wrapped(**evidence_inputs,use_cache=False,logits_to_keep=1).logits.float().cpu()
     trainer.accelerator.wait_for_everyone()
     if trainer.is_world_process_zero():
+        from spatial_intelligence.torch_numeric_contract import capture_numeric_contract
         torch.save(dict(inputs={key:value.cpu() for key,value in evidence_inputs.items()},
-            graph=None if graph is None else vars(graph.to('cpu')),logits=logits,row_id=row['id']),out/'reload-evidence.pt')
+            graph=None if graph is None else vars(graph.to('cpu')),logits=logits,row_id=row['id'],
+            rotary_buffers={name:value.detach().cpu().clone() for name,value in raw.named_buffers() if 'inv_freq' in name},
+            parameter_dtypes={name:str(value.dtype) for name,value in raw.named_parameters()},
+            numeric_contract=capture_numeric_contract()),out/'reload-evidence.pt')
         processor.save_pretrained(out/'final')
         write(out/'completion.json',dict(status='trained_pending_acceptance',accepted=False,
             diagnostic=bool(diagnostic_steps),checkpoint=str(out/'final'),steps=trainer.state.global_step,
@@ -260,6 +268,10 @@ def verify_saved(plan,stage,micro,diagnostic_steps=0):
     rng_files=list(resume.glob('rng_state*.pth'))
     if not optimizer_files or not rng_files: raise ValueError('Missing saved optimizer or RNG states')
     evidence=torch.load(out/'reload-evidence.pt',map_location='cpu',weights_only=False)
+    from spatial_intelligence.torch_numeric_contract import restore_numeric_contract
+    if 'numeric_contract' not in evidence:
+        raise ValueError('Legacy evidence lacks arithmetic settings; rerun the diagnostic in a new root')
+    restore_numeric_contract(evidence['numeric_contract'])
     baseline=plan.get('variant')=='matched_rgb_sft'
     loader=Qwen3VLForConditionalGeneration.from_pretrained if baseline else load_georoute_model
     model=loader(str(out/'final'),dtype=torch.bfloat16,attn_implementation='sdpa').cuda().eval()
@@ -268,10 +280,21 @@ def verify_saved(plan,stage,micro,diagnostic_steps=0):
     context=nullcontext() if baseline else model.georoute.graph_context(graph)
     with context,torch.no_grad(),torch.autocast('cuda',dtype=torch.bfloat16):
         logits=model(**inputs,use_cache=False,logits_to_keep=1).logits.float().cpu()
-        if not torch.allclose(logits,evidence['logits'],atol=.02,rtol=.01): raise ValueError('Fresh checkpoint logits changed')
+        for name,value in evidence.get('rotary_buffers',{}).items():
+            actual=dict(model.named_buffers())[name].cpu()
+            if actual.dtype!=value.dtype or not torch.equal(actual,value):
+                raise ValueError('Native rotary buffer changed on reload: '+name)
+        matched=torch.allclose(logits,evidence['logits'],atol=.02,rtol=.01)
+        write(out/'reload-comparison.json',dict(accepted=bool(matched),atol=.02,rtol=.01,
+            max_delta=float((logits-evidence['logits']).abs().max()),
+            mean_delta=float((logits-evidence['logits']).abs().mean()),
+            argmax_equal=bool(torch.equal(logits.argmax(-1),evidence['logits'].argmax(-1))),
+            numeric_contract=evidence['numeric_contract']))
+        if not matched: raise ValueError('Fresh checkpoint logits changed; inspect reload-comparison.json')
         response=model.generate(**inputs,do_sample=False,max_new_tokens=8,use_cache=True)
         if response.shape[1]<=inputs['input_ids'].shape[1]: raise ValueError('Reloaded model did not generate')
     receipt.update(status='complete',accepted=True,reload_verified=True,
+        numeric_contract=evidence['numeric_contract'],
         reload_max_logit_delta=float((logits-evidence['logits']).abs().max()),
         generation_smoke_tokens=int(response.shape[1]-inputs['input_ids'].shape[1]),
         optimizer_rng_files_present=True,pending=[],

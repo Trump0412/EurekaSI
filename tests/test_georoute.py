@@ -34,7 +34,9 @@ def test_zero_indegree_source_identity_twohop_and_graph_batch():
     combined=batch_graphs([g,g])
     assert combined.src.tolist()==[0,1,3,4]
     assert combined.dst.tolist()==[1,2,4,5]
-    assert torch.equal(a(torch.cat([x.detach(),x.detach()]),combined),torch.cat([once.detach(),once.detach()]))
+    # Different GEMM batch shapes may differ by FP32 rounding, even on CPU.
+    torch.testing.assert_close(a(torch.cat([x.detach(),x.detach()]),combined),
+                               torch.cat([once.detach(),once.detach()]),rtol=1e-6,atol=1e-7)
     nested=batch_graphs([combined,g])
     assert nested.sample_ids.tolist()==[0]*3+[1]*3+[2]*3
 
@@ -61,3 +63,30 @@ def test_tip_invalid_neighbors_rejected_and_routing_update():
         route.tip_loss(clean,g,mask,g)
     with pytest.raises(ValueError,match='No supported'):
         make_tip_intervention(build_graph([0,0],[],[],[]))
+
+
+def test_tip_later_candidate_cannot_hide_previous_targets_last_source():
+    # Three supported destinations form a cycle. Each frame also supplies
+    # alternative non-neighbor nodes for the wrong-support intervention.
+    g=build_graph([0,0,0,1,1,1,2,2,2],[0,3,6],[3,6,0],[1.,1.,1.])
+    for seed in range(32):
+        mask,bad=make_tip_intervention(g,mask_fraction=.99,
+            generator=torch.Generator().manual_seed(seed))
+        assert mask.any()
+        for target in mask.nonzero().flatten():
+            assert not mask[g.src[g.dst==target]].all()
+            assert not mask[bad.src[bad.dst==target]].any()
+        again,_=make_tip_intervention(g,mask_fraction=.99,
+            generator=torch.Generator().manual_seed(seed))
+        assert torch.equal(mask,again)
+
+
+def test_visual_rotary_recovers_canonical_frequencies_after_direct_cast():
+    from spatial_intelligence.georoute import FP32VisionRotaryEmbedding
+    rotary=FP32VisionRotaryEmbedding(40)
+    expected=rotary(448).clone()
+    rotary.bfloat16()
+    assert rotary.inv_freq.dtype==torch.bfloat16
+    actual=rotary(448)
+    assert rotary.inv_freq.dtype==torch.float32
+    assert torch.equal(actual,expected)

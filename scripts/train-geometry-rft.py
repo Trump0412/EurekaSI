@@ -16,6 +16,7 @@ import time
 
 REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO))
+from spatial_intelligence.rft_reward_activity import group_activity, merge_activity, activity_gate
 
 
 def read(path):
@@ -98,7 +99,7 @@ def run(plan, arm_name, mode):
     from transformers import AutoProcessor, set_seed
     from spatial_intelligence.geometry_rft import (load_policy,train_mode,prompt_inputs,to_device,
         cached_geometry,sample_group,response_logps,frozen_inventory,policy_base,load_reference,
-        reference_context,save_policy,policy_checkpoint_name,CPUStateAdamW,FULL_SCOPE)
+        reference_context,save_policy,policy_checkpoint_name,CPUStateAdamW,FULL_SCOPE,rft_autocast)
     from spatial_intelligence.geometry_rft_objective import group_standardized_advantages,gspo_loss
     from spatial_intelligence.geometry_rft_reward import score_response,RewardConfig
     rank=int(os.getenv('RANK','0')); local=int(os.getenv('LOCAL_RANK','0')); world=int(os.getenv('WORLD_SIZE','1'))
@@ -112,9 +113,8 @@ def run(plan, arm_name, mode):
     seed=int(plan.get('seed',3407)); set_seed(seed)
     arm=next(x for x in plan['jobs'] if x['name']==arm_name)
     recipe=read(plan['scientific_config']) if plan.get('scientific_config') else {}
-    from spatial_intelligence.geometry_rft import PROMPT_VERSION, STRUCTURED_INSTRUCTION
-    if recipe.get('prompt_version', PROMPT_VERSION) != PROMPT_VERSION:
-        raise ValueError('Scientific prompt version does not match snapshotted implementation')
+    from spatial_intelligence.geometry_rft import resolve_rft_prompt
+    prompt_version,prompt_instruction=resolve_rft_prompt(recipe,plan)
     cfg={**recipe.get('training',{}),**plan.get('training',{})}
     plan=dict(plan,lora_rank=int(cfg.get('lora_rank',64)),lora_alpha=int(cfg.get('lora_alpha',128)))
     scope=cfg.get('policy_scope',plan.get('policy_scope','language_lora_geometry'))
@@ -127,11 +127,16 @@ def run(plan, arm_name, mode):
     data=read(plan['data_receipt'])
     if data.get('status')!='ready' or not data.get('media_verified') or not data.get('leakage_checked'):
         raise ValueError('Data/media/heldout gate not accepted')
-    sft=read(plan['sft_receipt'])
-    if sft.get('status')!='complete' or not sft.get('reload_verified') or sft.get('diagnostic_only') is not False:
-        raise ValueError('A verified formal SFT checkpoint is required')
-    if Path(sft['checkpoint']).resolve()!=Path(plan['model_checkpoint']).resolve():
-        raise ValueError('SFT lineage mismatch')
+    from spatial_intelligence.rft_initialization import is_native, validate_native_initialization
+    native=is_native(plan)
+    if native:
+        sft=validate_native_initialization(plan)
+    else:
+        sft=read(plan['sft_receipt'])
+        if sft.get('status')!='complete' or not sft.get('reload_verified') or sft.get('diagnostic_only') is not False:
+            raise ValueError('A verified formal SFT checkpoint is required')
+        if Path(sft['checkpoint']).resolve()!=Path(plan['model_checkpoint']).resolve():
+            raise ValueError('SFT lineage mismatch')
     out=Path(plan['root'])/'runs'/arm_name/mode; out.mkdir(parents=True,exist_ok=True)
     if scope==FULL_SCOPE and mode=='train':
         gate=read(Path(plan['root'])/'runs'/arm_name/'gate'/'completion.json')
@@ -153,13 +158,14 @@ def run(plan, arm_name, mode):
         'data_receipt':str(Path(plan['data_receipt']).resolve()),'group_size':group,
         'prompts_per_update':prompt_batch,'updates':target,'formal_updates':updates,
         'prompt_budget':target*prompt_batch,'world':world,'seed':seed,'training':cfg,
-        'prompt_version':PROMPT_VERSION,'prompt_instruction':STRUCTURED_INSTRUCTION,
+        'prompt_version':prompt_version,'prompt_instruction':prompt_instruction,
         'reference_rows':reference_rows,'engine':'HF synchronous GSPO, not VERL',
         'policy_scope':scope,'optimizer_state_offload':offload,
         'reference_implementation':'separate frozen SFT language/interface' if scope==FULL_SCOPE else 'PEFT disabled adapter',
         'sampling':'temperature .7 / top_p .9; surrogate uses untempered actor log probabilities',
         'sampling_limit':'truncated sampling differs from raw actor distribution; no exact behavior-density claim',
-        'mode':mode,'base_checkpoint_identity':sft.get('checkpoint')}
+        'mode':mode,'base_checkpoint_identity':sft.get('checkpoint'),
+        'model_kind':plan.get('model_kind','geometry'),'initialization':plan.get('initialization','formal_sft')}
     path=out/'contract.json'
     if path.exists() and read(path)!=contract: raise ValueError('Changed contract requires a new run')
     if rank==0: write(path,contract)
@@ -168,20 +174,21 @@ def run(plan, arm_name, mode):
                      key=lambda p:int(p.name.split('-')[-1]))
     checkpoint=completed[-1] if completed else None
     policy=load_policy(plan,checkpoint/checkpoint_name if checkpoint else None,trainable=mode!='evaluate').cuda()
-    base=policy_base(policy); adapter=base.config.geometry_matrix['adapter']
+    base=policy_base(policy); adapter=None if native else base.config.geometry_matrix['adapter']
     inventory=frozen_inventory(policy)
     if any(('geometry_backbone' in n or '.visual.' in n) for n in inventory['trainable']):
         raise ValueError('RFT must freeze native RGB and checkpoint-specific VGGT')
     if rank==0: write(out/'parameter-inventory.json',inventory)
     def prepare(row):
-        value=to_device(prompt_inputs(processor,row,plan['vggt_source'],adapter,context_limit),torch.device('cuda',local))
+        value=to_device(prompt_inputs(processor,row,plan.get('vggt_source'),adapter,context_limit,
+            instruction=prompt_instruction),torch.device('cuda',local))
         if value['input_ids'].shape[1]+max_new>context_limit:
             raise ValueError('Prompt plus response exceeds context; no silent truncation')
         return value
     def score(response,row):
         return score_response(response['text'],row['answer'],task_type=row['answer_type'],
             choices=row.get('choices'),truncated=response['truncated'],config=RewardConfig(**cfg.get('reward',{})))
-    autocast=lambda: torch.autocast('cuda',dtype=torch.bfloat16)
+    autocast=rft_autocast
     if mode=='evaluate':
         evaluate_pair(plan,arm_name,out,policy,processor,prepare,score,autocast,gather,barrier,rank,world)
         if world>1: dist.destroy_process_group()
@@ -194,7 +201,8 @@ def run(plan, arm_name, mode):
     # Constant LR is an explicit adaptation where the RFT schedule is unspecified.
     scheduler=torch.optim.lr_scheduler.LambdaLR(optimizer,lambda _:1.)
     language_component='language_full' if scope==FULL_SCOPE else 'language_lora'
-    start=0; all_variation=0; components={language_component:False,'geometry_adapter':False}
+    start=0; all_variation=0; components={language_component:False}
+    if not native: components['geometry_adapter']=False
     if checkpoint:
         state=torch.load(checkpoint/'optimizer.pt',map_location='cpu',weights_only=False)
         optimizer.load_state_dict(state['optimizer']); scheduler.load_state_dict(state['scheduler'])
@@ -215,20 +223,33 @@ def run(plan, arm_name, mode):
             reference_initial=response_logps(reference_model,fixed_prompt,fixed_tokens).cpu()
         actor_initial=response_logps(policy,fixed_prompt,fixed_tokens).cpu()
     initial_parity=bool(torch.allclose(actor_initial,reference_initial,atol=.02,rtol=.01)) if not checkpoint else True
+    write(out/f'initial-parity-rank{rank}.json',dict(accepted=initial_parity,
+        resumed=checkpoint is not None,max_logprob_delta=float((actor_initial-reference_initial).abs().max()),
+        atol=.02,rtol=.01,reference='fixed_SFT_values_matching_actor_arithmetic_precision'))
     if not initial_parity: raise ValueError('New actor differs from fixed SFT reference before training')
     del fixed_prompt
     rollout_micro=1
+    rollout_cap=int(plan.get('rollout_micro_cap',8))
+    if rollout_cap not in (1,2,4,8): raise ValueError('Invalid rollout micro cap')
     selection_path=Path(plan['root'])/'runs'/arm_name/'gate'/'rollout-selection.json'
     if mode=='train':
         selected=read(selection_path); rollout_micro=selected['selected_micro']
         if selected.get('group_size')!=8: raise ValueError('Changed group size')
+        if rollout_micro>rollout_cap: raise ValueError('Gate selection exceeds runtime micro cap')
     elif not checkpoint:
         # Pure rollout sizing precedes any optimizer update; same long prompt
         # and seed per candidate. The logical group always contains eight draws.
         longest=max(datasets['4drl']+datasets.get('spatialladder',[]),
                     key=lambda r:(len(r['media']),len(r['question'])))
         candidate_prompt=prepare(longest); candidates=[]
-        for micro in (1,2,4,8):
+        probe_ids=[longest['id']]
+        for probe_index in plan.get('rollout_probe_indices',[]):
+            probe_row=sampled_row(datasets,arm,seed,int(probe_index))
+            probe_prompt=prepare(probe_row);probe_ids.append(probe_row['id'])
+            if probe_prompt['input_ids'].shape[1]>candidate_prompt['input_ids'].shape[1]:
+                candidate_prompt=probe_prompt
+            del probe_prompt
+        for micro in (m for m in (1,2,4,8) if m<=rollout_cap):
             torch.cuda.reset_peak_memory_stats(); set_seed(seed+rank)
             began=time.monotonic(); success=True; error=None; generated=0
             try:
@@ -250,20 +271,25 @@ def run(plan, arm_name, mode):
         if not accepted: raise RuntimeError('No G=8 rollout microbatch fits safely')
         rollout_micro=max(accepted,key=lambda c:c['tokens_per_second'])['micro']
         if rank==0: write(selection_path,{'selected_micro':rollout_micro,'group_size':8,'candidates':candidates,
+            'rollout_micro_cap':rollout_cap,'probe_ids':probe_ids,
+            'probe_prompt_tokens':candidate_prompt['input_ids'].shape[1],
             'limit':'rollout timing, not optimizer or total-training ETA'})
         del candidate_prompt; set_seed(seed+rank)
     elif selection_path.exists(): rollout_micro=read(selection_path)['selected_micro']
     torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
-    step_times=[]; started=time.monotonic()
+    step_times=[]; started=time.monotonic(); reward_activity={}
     last_loss=state.get('last_loss',float('nan')) if checkpoint else 0.
     last_grad=state.get('last_grad',0.) if checkpoint else 0.
     for step in range(start,target):
         began=time.monotonic(); optimizer.zero_grad(set_to_none=True); local_loss=0.; varied=0; generated=0
         timings={'input':0.,'rollout_and_geometry':0.,'old_reference_logprob':0.,'backward':0.,'sync_optimizer':0.}
-        source_stats={}
+        source_stats={}; step_reward_activity={}
         probes={}
-        language_pattern='.language_model.layers.0.self_attn.q_proj.weight' if scope==FULL_SCOPE else 'lora_B'
-        for group_name,pattern in [(language_component,language_pattern),('geometry_adapter','geometry_adapter')]:
+        # Hybrid-attention backbones need not have a self-attention layer zero.
+        language_pattern='.language_model.layers.' if scope==FULL_SCOPE else 'lora_B'
+        patterns=[(language_component,language_pattern)]
+        if not native: patterns.append(('geometry_adapter','geometry_adapter'))
+        for group_name,pattern in patterns:
             for name,p in policy.named_parameters():
                 if pattern in name and p.requires_grad and p.ndim>=2:
                     indices=probe_indices(p.numel(),2048,local)
@@ -280,6 +306,8 @@ def run(plan, arm_name, mode):
                         temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)))
                     torch.cuda.synchronize(); timings['rollout_and_geometry']+=time.monotonic()-part
                     scores=[score(r,row) for r in responses]
+                    step_reward_activity=merge_activity([step_reward_activity,
+                        group_activity(scores,cfg.get('reward',{}))])
                     source=row['source']; stats=source_stats.setdefault(source,{'prompts':0,'responses':0,'answer_sum':0.,'reward_sum':0.,'truncated':0})
                     stats['prompts']+=1; stats['responses']+=len(responses)
                     stats['answer_sum']+=sum(r['answer'] for r in scores)
@@ -326,7 +354,8 @@ def run(plan, arm_name, mode):
         torch.cuda.synchronize(); seconds=time.monotonic()-began; step_times.append(seconds)
         reports=gather({'loss':local_loss,'grad_norm':float(grad),'variation':varied,'tokens':generated,
             'seconds':seconds,'peak_reserved_gib':torch.cuda.max_memory_reserved()/2**30,'components':components,
-            'timings':timings,'source_statistics':source_stats})
+            'timings':timings,'source_statistics':source_stats,'reward_activity':step_reward_activity})
+        reward_activity=merge_activity([reward_activity]+[x['reward_activity'] for x in reports])
         all_variation+=sum(x['variation'] for x in reports)
         last_loss=sum(x['loss'] for x in reports)/world; last_grad=max(x['grad_norm'] for x in reports)
         if rank==0:
@@ -336,11 +365,21 @@ def run(plan, arm_name, mode):
                 'seconds':max(x['seconds'] for x in reports),'generated_tokens':sum(x['tokens'] for x in reports),
                 'rank_timings':[x['timings'] for x in reports],
                 'rank_source_statistics':[x['source_statistics'] for x in reports],
+                'reward_activity_since_start':reward_activity,
+                'reward_activity_gate':activity_gate(reward_activity,cfg.get('reward',{})),
                 'remaining_hours':sum(step_times[1:] or step_times)/len(step_times[1:] or step_times)*(target-step-1)/3600,
                 'eta_status':'warming_up' if len(step_times)<3 else 'measured'}
             write(out/'live-eta.json',value)
             with (out/'metrics.jsonl').open('a') as stream: stream.write(json.dumps(value)+'\n')
             print(json.dumps(value),flush=True)
+        # All ranks see the same gathered evidence. Never silently run thousands
+        # of steps while configured shaping rewards remain inactive. On resume
+        # this observes a fresh 100-update window; it is not a full-history claim.
+        if step-start+1==100:
+            reward_gate=activity_gate(reward_activity,cfg.get('reward',{}))
+            if not reward_gate['accepted']:
+                if rank==0: write(out/'blocked-reward-activity.json',reward_gate)
+                raise RuntimeError('Configured reward terms inactive: '+','.join(reward_gate['failures']))
         if (step+1)%int(cfg.get('save_every',25))==0 or step+1==target:
             checkpoint_started=time.monotonic()
             checkpoint=out/f'checkpoint-{step+1:06d}'; checkpoint.mkdir(exist_ok=True)
@@ -375,7 +414,10 @@ def run(plan, arm_name, mode):
                     'components':components})
     healthy=(all(x['reload_verified'] and x['reference_fixed'] and all(x['components'].values()) for x in reports)
              and all_variation>0 and (last_grad>0 or start==target))
+    reward_gate=activity_gate(reward_activity,cfg.get('reward',{}))
+    if mode=='gate': healthy=healthy and reward_gate['accepted']
     receipt={'status':'complete' if healthy else 'failed','checkpoint':str(checkpoint/checkpoint_name),
+        'reward_activity_since_start':reward_activity,'reward_activity_gate':reward_gate,
         'policy_scope':scope,'optimizer_state_offload':offload,
         'arm':arm_name,'mode':mode,
         'initial_checkpoint':plan['model_checkpoint'],'updates':target,'prompt_budget':target*prompt_batch,
@@ -383,7 +425,8 @@ def run(plan, arm_name, mode):
         'component_updates':components,'within_group_reward_variation':all_variation>0,
         'groups_with_reward_variation':all_variation,'all_group_responses_verified':True,
         'reference_initial_parity':initial_parity,'reference_fixed':reference_fixed,
-        'geometry_preserved':True,'reload_verified':all(x['reload_verified'] for x in reports),
+        'geometry_preserved':not native,'native_control_verified':native,
+        'reload_verified':all(x['reload_verified'] for x in reports),
         'reload_max_delta':max(x['max_delta'] for x in reports),'diagnostic':mode=='gate',
         'elapsed_seconds':time.monotonic()-started,'formal_updates':updates}
     receipt['allocated_gpu_hours_excluding_setup']=(time.monotonic()-started)*world/3600
@@ -402,7 +445,8 @@ def evaluate_pair(plan, arm, out, policy, processor, prepare, score, autocast, g
     data=read(plan['data_receipt']); manifests=plan.get('eval_manifests',data['eval_manifests'])
     if not manifests: raise ValueError('No declared evaluation datasets')
     results={}
-    for variant in ('sft','rft'):
+    baseline='released_native' if plan.get('initialization')=='released_native' else 'sft'
+    for variant in (baseline,'rft'):
         if variant=='rft':
             policy.cpu(); del policy; torch.cuda.empty_cache()
             policy=load_policy(plan,trained['checkpoint'],trainable=False).cuda()

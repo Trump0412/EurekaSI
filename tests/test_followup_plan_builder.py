@@ -20,6 +20,13 @@ def test_all_roles_real_commands_and_cross_node_barrier():
         assert all(s['commands'] and s['requirements'] for s in plan['stages'])
         assert all(s['use_lora'] is False for s in plan['stages'])
         for v in plan['stage_plans'].values():assert '\\' not in v['root']
+        for key,worker in plan['stage_plans'].items():
+            if key.startswith('geofits-') or worker['variant']=='no_tip':continue
+            variant=worker['variant']
+            support=next(s for s in plan['stages'] if s['name']==f'route-{variant}-tip-support')
+            tip=next(s for s in plan['stages'] if s['name']==f'route-{variant}-tip')
+            assert support['receipt']==worker['tip_support_receipt']
+            assert support['name'] in tip['after']
     fits=next(s for s in plans['primary']['stages'] if s['name']=='geofits-full-sft')
     assert len([r for r in fits['requirements'] if r['path'].endswith('route-paper-complete.json')])==3
     assert plans['control_a']['stage_plans']['one_stb.json']['architecture']['blocks_per_exit']==1

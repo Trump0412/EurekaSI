@@ -14,6 +14,11 @@ import torch
 FULL_SCOPE = 'language_full_geometry'
 
 
+def rft_autocast(device_type='cuda'):
+    """Do not reuse no-grad rollout weight casts in checkpointed training."""
+    return torch.autocast(device_type,dtype=torch.bfloat16,cache_enabled=False)
+
+
 def policy_base(policy):
     return policy.get_base_model() if hasattr(policy, 'get_base_model') else policy
 
@@ -25,7 +30,8 @@ def configure_full_policy(base):
     base.requires_grad_(False)
     base.model.language_model.requires_grad_(True)
     base.lm_head.requires_grad_(True)
-    base.geometry_adapter.requires_grad_(True)
+    if hasattr(base, 'geometry_adapter'):
+        base.geometry_adapter.requires_grad_(True)
     for name,p in base.named_parameters():
         if 'null_tokens' in name: p.requires_grad_(False)
         if p.requires_grad: p.data=p.data.float()
@@ -46,13 +52,17 @@ def save_policy(policy, path, plan):
     torch.save(state,path/'full_trainable.pt')
     (path/'policy_scope.json').write_text(json.dumps(dict(scope=FULL_SCOPE,
         initial_checkpoint=str(plan['model_checkpoint']),
-        frozen_modules=['native_rgb','checkpoint_specific_vggt'],format_version=1)),encoding='utf-8')
+        model_kind=plan.get('model_kind','geometry'),
+        frozen_modules=['native_rgb'] + (['checkpoint_specific_vggt'] if hasattr(policy_base(policy),'geometry_backbone') else []),
+        format_version=1)),encoding='utf-8')
 
 
 def restore_full_policy(base, path, plan):
     meta=json.loads((Path(path)/'policy_scope.json').read_text(encoding='utf-8'))
     if meta.get('scope')!=FULL_SCOPE or Path(meta['initial_checkpoint']).resolve()!=Path(plan['model_checkpoint']).resolve():
         raise ValueError('Full-policy scope or fixed SFT lineage mismatch')
+    if meta.get('model_kind','geometry') != plan.get('model_kind','geometry'):
+        raise ValueError('Full-policy model kind mismatch')
     policy=configure_full_policy(base)
     saved=torch.load(Path(path)/'full_trainable.pt',map_location='cpu',weights_only=True)
     actual={n:p for n,p in policy.named_parameters() if p.requires_grad}
@@ -67,19 +77,58 @@ def restore_full_policy(base, path, plan):
     return policy
 
 
+def match_reference_precision(reference, actor):
+    """Match arithmetic dtypes, never copy the actor's learned values.
+
+    FP32 trainable actor norms/residuals are not equivalent to BF16 reference
+    norms even under BF16 autocast. Promote the fixed SFT reference losslessly.
+    """
+    actor_parameters=dict(actor.named_parameters())
+    reference_parameters=dict(reference.named_parameters())
+    if actor_parameters.keys()!=reference_parameters.keys():
+        raise ValueError('Actor/reference parameter namespaces differ')
+    for name,parameter in reference_parameters.items():
+        target=actor_parameters[name]
+        if parameter.shape!=target.shape: raise ValueError('Reference shape mismatch: '+name)
+        if parameter.dtype!=target.dtype:
+            if target.dtype!=torch.float32:
+                raise ValueError('Reference precision matching must not round SFT weights')
+            parameter.data=parameter.data.to(dtype=target.dtype)
+    return reference
+
+
+def load_initial_model(plan):
+    """Native controls never construct VGGT, slots, or a fake SFT checkpoint."""
+    kind=plan.get('model_kind','geometry')
+    if kind=='native_qwen3vl':
+        from transformers import AutoConfig, Qwen3VLForConditionalGeneration
+        config=AutoConfig.from_pretrained(plan['model_checkpoint'])
+        if config.model_type!='qwen3_vl' or getattr(config,'geometry_matrix',None):
+            raise ValueError('Native control requires a plain Qwen3-VL checkpoint')
+        if plan.get('initialization')!='released_native' or plan.get('use_lora') is not False:
+            raise ValueError('Native control requires explicit released initialization and no LoRA')
+        return Qwen3VLForConditionalGeneration.from_pretrained(plan['model_checkpoint'],
+            config=config,dtype=torch.bfloat16,attn_implementation='sdpa')
+    if kind!='geometry': raise ValueError('Unknown RFT model kind')
+    from .qwen3vl_geometry_matrix import load_matrix_model
+    return load_matrix_model(plan['model_checkpoint'],plan['vggt_source'],stage='eval')
+
+
 def load_reference(plan, policy):
     """Separate immutable SFT language/interface; only frozen visual trunks shared."""
     if plan.get('policy_scope') != FULL_SCOPE: return None
     from .qwen3vl_geometry_matrix import load_matrix_model
     from .qwen35_video_compat import install_video_rope_compat
-    reference=load_matrix_model(plan['model_checkpoint'],plan['vggt_source'],stage='eval')
+    reference=load_initial_model(plan)
     install_video_rope_compat(reference)
     base=policy_base(policy)
     # Shared modules have no trainable state, no dropout and no optimizer owner.
     reference.model.visual=base.model.visual
-    reference.geometry_backbone=base.geometry_backbone
+    if hasattr(base,'geometry_backbone'):
+        reference.geometry_backbone=base.geometry_backbone
+    match_reference_precision(reference,base)
     reference.requires_grad_(False).eval()
-    if reference.model.language_model is base.model.language_model or reference.geometry_adapter is base.geometry_adapter:
+    if reference.model.language_model is base.model.language_model or (hasattr(base,'geometry_adapter') and reference.geometry_adapter is base.geometry_adapter):
         raise ValueError('Full RFT reference must not share trainable actor parameters')
     return reference
 
@@ -127,6 +176,7 @@ class CPUStateAdamW(torch.optim.AdamW):
 
 
 PROMPT_VERSION = 'geopsro-original-template-numeric-safe-v2'
+NATIVE_FORMAT_PROMPT_VERSION = 'geopsro-original-template-native-literal-tags-v3'
 # Original GeoPSRO data/formatters.py::psro_prompt instruction. The numeric
 # suffix below is an explicit adapter for our strict SpatialLadder interface.
 STRUCTURED_INSTRUCTION = '''You should solve the problem using the following format:
@@ -141,6 +191,28 @@ Write only the final answer. For multiple-choice questions, write only the optio
 </answer>
 
 For numeric questions, write a numeric value only without unit text, expressed in the requested units.'''
+
+NATIVE_FORMAT_INSTRUCTION = STRUCTURED_INSTRUCTION + '''
+
+Output serialization requirement: the XML tags below are literal output text,
+not hidden instructions. Your response must start with <think> and end with
+</answer>. Write all four tags exactly: <think>, </think>, <answer>, </answer>.
+Inside <think>, use the three headings above, one short sentence per heading.
+After </think>, write <answer> followed by ONLY one option letter for a multiple-choice
+question (or ONLY the numeric value for a numeric question), then </answer>.
+Do not repeat the options, include option descriptions, use Markdown fences, or
+write anything outside these tags.'''
+
+
+def resolve_rft_prompt(recipe, plan):
+    """Versioned train-only format adaptation; legacy runs keep exact instructions."""
+    version=recipe.get('prompt_version',PROMPT_VERSION)
+    if version==PROMPT_VERSION: return version,STRUCTURED_INSTRUCTION
+    if version==NATIVE_FORMAT_PROMPT_VERSION:
+        if plan.get('model_kind')!='native_qwen3vl' or plan.get('initialization')!='released_native':
+            raise ValueError('Native serialization repair cannot silently change geometry experiments')
+        return version,NATIVE_FORMAT_INSTRUCTION
+    raise ValueError('Unknown RFT prompt version')
 
 
 def add_policy_adapter(base, rank=64, alpha=128):
@@ -199,7 +271,7 @@ def restore_policy_adapter(base, adapter_path, trainable=True):
 def load_policy(plan, adapter_path=None, trainable=True):
     from .qwen3vl_geometry_matrix import load_matrix_model
     from .qwen35_video_compat import install_video_rope_compat
-    base = load_matrix_model(plan['model_checkpoint'], plan['vggt_source'], stage='eval')
+    base = load_initial_model(plan)
     scope=plan.get('policy_scope','language_lora_geometry')
     if scope not in ('language_lora_geometry',FULL_SCOPE): raise ValueError('Unknown RFT policy scope')
     if scope==FULL_SCOPE:
@@ -222,20 +294,20 @@ def train_mode(policy):
     policy.train()
     base = policy_base(policy)
     base.model.visual.eval()
-    base.geometry_backbone.eval()
+    if hasattr(base,'geometry_backbone'): base.geometry_backbone.eval()
 
 
-def prompt_inputs(processor, row, source, adapter, max_context=16384):
+def spatial_prompt_inputs(processor, row, max_context=16384, *, instruction=None):
+    """Shared native RGB prompt, before checkpoint-specific geometry insertion."""
     import numpy as np
     from PIL import Image
     from .qwen35 import Collator
-    from .qwen3vl_geometry_matrix import insert_slots, preprocess_geometry
     text = row['question']
     choices = row.get('choices') or row.get('options')
     if choices:
         if not isinstance(choices,dict): raise ValueError('Choices must be a canonical mapping')
         text += '\nOptions:\n'+'\n'.join(f'{k}. {v}' for k,v in choices.items())
-    text += '\n'+STRUCTURED_INSTRUCTION
+    text += '\n'+(STRUCTURED_INSTRUCTION if instruction is None else instruction)
     media = row['media']
     if not media: raise ValueError('Missing visual evidence')
     if row.get('input_mode') == 'video':
@@ -257,6 +329,16 @@ def prompt_inputs(processor, row, source, adapter, max_context=16384):
     else:
         adjusted=dict(row,question=text,choices=None,instruction='')
         batch=Collator(processor,max_context=max_context,training=False)([adjusted])
+    return batch
+
+
+def prompt_inputs(processor, row, source, adapter, max_context=16384, *, instruction=None):
+    from .qwen3vl_geometry_matrix import insert_slots, preprocess_geometry
+    media = row['media']
+    batch = spatial_prompt_inputs(processor, row, max_context, instruction=instruction)
+    if adapter is None:
+        if source is not None: raise ValueError('Native input must not declare a VGGT source')
+        return batch
     batch=insert_slots(batch,processor,[len(media)],adapter,max_context=max_context)
     batch['geometry_images']=[preprocess_geometry(media,source)]
     return batch
@@ -334,7 +416,13 @@ def cached_geometry(policy, prompt):
     No persistent cross-checkpoint cache and no native RGB feature replacement.
     Identity is checked to prevent reuse for a different frame tensor.
     """
-    backbone=policy_base(policy).geometry_backbone
+    base=policy_base(policy)
+    if not hasattr(base,'geometry_backbone'):
+        if any(key.startswith('geometry_') for key in prompt):
+            raise ValueError('Native policy received geometry inputs')
+        yield None
+        return
+    backbone=base.geometry_backbone
     if any(p.requires_grad for p in backbone.parameters()):
         raise ValueError('Trainable VGGT cannot use the detached RFT feature cache')
     images=prompt['geometry_images']

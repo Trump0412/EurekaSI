@@ -1,0 +1,9 @@
+{
+  "spbench": {"kind":"dataset","repo":"hongxingli/SPBench","revision":"03611025a4e6032c558117c0e86b76c8b084c305","patterns":["README.md","*.parquet","*.zip"],"destination":"datasets/spbench","priority":0},
+  "sparbench": {"kind":"dataset","repo":"jasonzhango/SPAR-Bench","revision":"ee122877c25c8bb08539b07e06d872152c9968f1","patterns":["README.md","data/*.parquet"],"destination":"datasets/sparbench","priority":1},
+  "vlm4d": {"kind":"dataset","repo":"shijiezhou/VLM4D","revision":"9562dc8608cf9715f979ed0c6a5409a11b3978ca","patterns":["README.md","QA/*.json","videos_real/*","videos_synthetic/*"],"destination":"datasets/vlm4d","priority":2},
+  "stibench": {"kind":"dataset","repo":"MINT-SJTU/STI-Bench","revision":"6b1009261689d3d5244bc2338ab5f83e3fb55875","patterns":["README.md","data/*.parquet","video.zip"],"destination":"datasets/stibench","priority":3},
+  "mmbench_en_dev": {"kind":"dataset","repo":"lmms-lab/MMBench","revision":"56ba1af8954932c4804bd3f522e05ed96e63b654","patterns":["README.md","en/dev*.parquet"],"destination":"datasets/mmbench_en_dev","priority":4},
+  "mmmu_validation": {"kind":"dataset","repo":"MMMU/MMMU","revision":"98e6ac0cb9b7b2cd2c991b85a50762edc4aedc68","patterns":["README.md","*/validation*.parquet"],"destination":"datasets/mmmu_validation","priority":5},
+  "videomme": {"kind":"dataset","repo":"lmms-lab/Video-MME","revision":"ead1408f75b618502df9a1d8e0950166bf0a2a0b","patterns":["README.md","videomme/*.parquet","videos_chunked_*.zip"],"destination":"datasets/videomme","priority":6}
+}

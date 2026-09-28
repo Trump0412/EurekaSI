@@ -1,0 +1,12 @@
+diff --git a/workers/rollout/vllm_rollout/vllm_async_server.py b/workers/rollout/vllm_rollout/vllm_async_server.py
+--- a/workers/rollout/vllm_rollout/vllm_async_server.py
++++ b/workers/rollout/vllm_rollout/vllm_async_server.py
+@@ -108,7 +108,7 @@ class ExternalZeroMQDistributedExecutor(Executor):
+         self.collective_rpc("init_device")
+         self.collective_rpc("load_model")
+ 
+-    if _VLLM_VERSION >= version.parse("0.12.0"):
++    if _VLLM_VERSION >= version.parse("0.11.2"):
+ 
+         def execute_model(
+             self, scheduler_output: "SchedulerOutput", non_block: bool = False

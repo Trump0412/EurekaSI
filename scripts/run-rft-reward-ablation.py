@@ -90,7 +90,7 @@ def execute(plan):
             chosen = next(c for c in plan['candidates'] if c['name'] == selection['winner'])
             original = read(Path(chosen['root'])/'plan.json')
             recipe = read(Path(chosen['root'])/'inputs/scientific-config.json')
-            if recipe['training']['reward']['version'] != 'geopsro-lexicon-strict-v2':
+            if recipe['training']['reward']['version'] not in ('geopsro-lexicon-strict-v2','geopsro-independent-answer-v3'):
                 raise ValueError('Full experiment did not use the restored lexical protocol')
             variant = plan['variant']
             if variant not in ('answer_only','answer_format'): raise ValueError('Unknown reward ablation')

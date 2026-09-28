@@ -153,14 +153,23 @@ def execute(args):
         worker.update(root=str(subset.resolve()), data_receipt=str((subset / 'data.json').resolve()),
             diagnostic_tip_checkpoint=str((subset / 'diagnostic/tip/micro1/final').resolve()),
             diagnostic_tip_receipt=str((subset / 'diagnostic/tip/micro1/completion.json').resolve()))
+        worker['tip_support_receipt']=str(subset/'tip-support/completion.json')
         worker_plan = subset / 'plan.json'
         write(worker_plan, worker)
+        if plan['variant']!='no_tip':
+            support=[str(REPO/'scripts/prepare-tip-support.py'),'--plan',str(worker_plan),'--output',str(subset/'tip-support')]
+            run([sys.executable,'-m','torch.distributed.run','--standalone','--nproc_per_node='+str(len(gpus)),*support],subset/'support.log',env,args.timeout_seconds)
+            run([sys.executable,*support,'--merge'],subset/'support-merge.log',env,args.timeout_seconds)
         for phase in (('sft',) if plan['variant']=='no_tip' else ('tip', 'sft')):
             if args.yield_request and Path(args.yield_request).is_file():
                 write(output/'yield.json',dict(status='yielded_to_priority',full_model_verified=False,time=time.time()))
                 raise SystemExit(75)
+            # Zero-initialized residual gates need more than one nonzero-LR
+            # update before a BF16 influence test is informative. This changes
+            # diagnostic duration only, never the formal recipe/initialization.
+            diagnostic_steps = args.tip_diagnostic_steps if phase == 'tip' else 2
             base = [str(REPO / 'scripts/train-georoute-stage.py'), '--plan', str(worker_plan.resolve()),
-                '--stage', phase, '--micro', '1', '--diagnostic-steps', '2']
+                '--stage', phase, '--micro', '1', '--diagnostic-steps', str(diagnostic_steps)]
             command = [sys.executable, '-m', 'torch.distributed.run', '--standalone',
                 '--nproc_per_node=' + str(len(gpus)), *base]
             write(output / 'progress.json', dict(status='running', subset=name, stage=phase,
@@ -208,9 +217,13 @@ def main():
     parser.add_argument('--gpus', required=True)
     parser.add_argument('--dependency-receipt', action='append', required=True)
     parser.add_argument('--timeout-seconds', type=int, default=7200)
+    parser.add_argument('--tip-diagnostic-steps', type=int, default=32,
+                        help='TIP-only diagnostic duration; formal initialization is unchanged')
     parser.add_argument('--authorize-run', action='store_true')
     parser.add_argument('--yield-request',help='Yield at a diagnostic command boundary for priority GPU work')
     args = parser.parse_args()
+    if args.tip_diagnostic_steps < 2:
+        parser.error('TIP diagnostic requires at least two optimizer steps')
     if not args.authorize_run:
         parser.error('Explicit --authorize-run required; this command consumes GPUs')
     def stop(signum, frame):

@@ -6,7 +6,7 @@ included in every checkpoint, including when frozen.
 """
 import sys
 import torch
-from transformers import Qwen3VLForConditionalGeneration, AutoConfig
+from transformers import Qwen3VLForConditionalGeneration, Qwen3_5ForConditionalGeneration, AutoConfig
 from .geometry_tokens import GeometryTokenAdapter
 from .qwen35 import Collator
 
@@ -94,7 +94,7 @@ class MatrixCollator(Collator):
         return result
 
 
-class Qwen3VLGeometryMatrix(Qwen3VLForConditionalGeneration):
+class GeometryMatrixMixin:
     def __init__(self, config):
         super().__init__(config)
         spec = getattr(config, 'geometry_matrix', None)
@@ -210,6 +210,15 @@ class Qwen3VLGeometryMatrix(Qwen3VLForConditionalGeneration):
         return result
 
 
+class Qwen3VLGeometryMatrix(GeometryMatrixMixin, Qwen3VLForConditionalGeneration):
+    pass
+
+
+class Qwen35GeometryMatrix(GeometryMatrixMixin, Qwen3_5ForConditionalGeneration):
+    """Preserve native hybrid attention/cache; share only geometry injection."""
+    pass
+
+
 def load_matrix_model(path, source, weights=None, adapter=None, stage='eval', train_vggt=False):
     config = AutoConfig.from_pretrained(path)
     existing = getattr(config, 'geometry_matrix', None)
@@ -218,8 +227,13 @@ def load_matrix_model(path, source, weights=None, adapter=None, stage='eval', tr
         config.geometry_matrix['source'] = str(source)
     elif stage != 'align':
         raise ValueError('SFT/evaluation require a geometry checkpoint, not a vanilla model')
-    model = Qwen3VLGeometryMatrix.from_pretrained(path, config=config,
+    classes={'qwen3_vl':Qwen3VLGeometryMatrix,'qwen3_5':Qwen35GeometryMatrix}
+    if config.model_type not in classes: raise ValueError('Unsupported geometry backbone: '+config.model_type)
+    model = classes[config.model_type].from_pretrained(path, config=config,
                         dtype=torch.bfloat16, attn_implementation='sdpa')
+    if config.model_type=='qwen3_5':
+        from .qwen35_video_compat import install_video_rope_compat
+        install_video_rope_compat(model)
     if not existing:
         if weights is None or adapter is None: raise ValueError('Alignment initialization needs weights and adapter')
         model.attach_geometry({'source': str(source), 'adapter': adapter, 'version': 1}, weights=weights)

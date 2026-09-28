@@ -96,13 +96,41 @@ def spatialladder_numeric_reward(prediction, target):
     return sum(error <= 1 - threshold for threshold in thresholds) / n
 
 
+def parse_independent_final_tag(response, task_type, choices=None):
+    """Gold-blind final answer after unwrapped prose; never repairs malformed tags.
+
+    Format and words are still zero. A valid terminal answer must occur exactly
+    once; unfinished thinking, duplicated answers and trailing text abstain.
+    """
+    text=str(response).strip()
+    if text.count('<answer>')!=1 or text.count('</answer>')!=1: return None
+    match=re.fullmatch(r'(.*?)<answer>([^<>]*)</answer>',text,re.S)
+    if not match or re.search(r'</?(?:think|answer)\b',match[1],re.I): return None
+    value=_scalar(match[2],task_type,choices)
+    if value is None: return None
+    if task_type=='mcq':
+        claims=re.findall(r'(?:final answer|correct (?:answer|option|choice))\s*(?:is|:|=)\s*([A-Za-z])\b',match[1],re.I)
+        if any(claim.upper()!=value for claim in claims): return None
+    return value
+
+
 def score_response(response, ground_truth, task_type="mcq", choices=None, truncated=False, config=None):
     config = config or RewardConfig()
-    if config.version not in ('structured-spatial-qa-v1', 'geopsro-lexicon-strict-v2'):
+    if config.version not in ('structured-spatial-qa-v1', 'geopsro-lexicon-strict-v2', 'geopsro-independent-answer-v3', 'geopsro-final-answer-v4'):
         raise ValueError('Unknown reward version')
     if config.tau <= 0 or len(config.vocabulary) != 3:
         raise ValueError("positive tau and three field vocabularies required")
     parsed = parse_response(response, task_type=task_type, choices=choices, truncated=truncated)
+    if config.version in ('geopsro-independent-answer-v3','geopsro-final-answer-v4') and not truncated and parsed['parsed_answer'] is None:
+        # Whole-payload scalar only: never extract a favorable answer from prose,
+        # malformed tags, multiple claims or the gold answer. Format/words stay 0.
+        bare = _scalar(response, task_type, choices)
+        if bare is not None:
+            parsed = dict(parsed, parsed_answer=bare, structure=0.0, fields={}, reason='bare_scalar_answer')
+    if config.version=='geopsro-final-answer-v4' and not truncated and parsed['parsed_answer'] is None:
+        final=parse_independent_final_tag(response,task_type,choices)
+        if final is not None:
+            parsed=dict(parsed,parsed_answer=final,structure=0.0,fields={},reason='independent_final_tag')
     gold = _scalar(ground_truth, task_type, choices)
     if gold is None:
         raise ValueError("invalid ground truth for declared task type")
@@ -114,7 +142,7 @@ def score_response(response, ground_truth, task_type="mcq", choices=None, trunca
         matches[field] = sorted(tokens.intersection(word.casefold() for word in vocabulary))
     words = sum(min(1.0, len(value) / config.tau) for value in matches.values()) / 3
     structure = parsed["structure"]
-    if config.version == 'geopsro-lexicon-strict-v2':
+    if config.version in ('geopsro-lexicon-strict-v2', 'geopsro-independent-answer-v3', 'geopsro-final-answer-v4'):
         from .geometry_rft_legacy_words import legacy_words_score
         # Restore the full original lexical reward, not its unsafe answer parser.
         # Numeric partial credit remains in answer; legacy words require answer=1.

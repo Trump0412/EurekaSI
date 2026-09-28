@@ -18,6 +18,8 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(REPO))
+from spatial_intelligence.rft_initialization import is_native, validate_native_initialization
 ARMS = {'mixed': (.7, .3), 'four_d_only': (1., 0.)}
 TERMINAL = {'complete', 'complete_with_failures', 'failed', 'blocked', 'training_complete_evaluation_blocked'}
 
@@ -33,9 +35,14 @@ def write(path, value):
 
 
 def validate_plan(plan):
-    for field in ('root', 'python', 'model_checkpoint', 'processor', 'vggt_source', 'sft_receipt', 'data_receipt',
+    for field in ('root', 'python', 'model_checkpoint', 'processor', 'data_receipt',
                   'scientific_config', 'pair_id'):
         if not plan.get(field): raise ValueError('Missing explicit ' + field)
+    if is_native(plan):
+        if plan.get('initialization')!='released_native' or plan.get('sft_receipt') or plan.get('vggt_source'):
+            raise ValueError('Native initialization must not pretend to be SFT/geometry')
+    elif not plan.get('sft_receipt') or not plan.get('vggt_source'):
+        raise ValueError('Geometry RFT requires SFT and VGGT sources')
     if plan.get('group_size', 8) != 8:
         raise ValueError('Logical rollout group must remain eight')
     if plan.get('prompts_per_update', 16) != 16:
@@ -73,6 +80,7 @@ def dependency_ready(dep):
 
 
 def validate_sft(plan):
+    if is_native(plan): return validate_native_initialization(plan)
     value = read(plan['sft_receipt'])
     for field in ('finite_loss', 'nonzero_update', 'reload_verified'):
         if value.get(field) is not True: raise ValueError('SFT acceptance missing: ' + field)
@@ -216,7 +224,7 @@ def resolve_inputs(plan):
         runtime = read(target)
         if checkpoint_identity(plan['model_checkpoint']) != runtime['checkpoint_identity']:
             raise ValueError('Source checkpoint changed after acceptance')
-        for key in ('sft_receipt', 'data_receipt'):
+        for key in (('data_receipt',) if is_native(plan) else ('sft_receipt', 'data_receipt')):
             if Path(plan[key]).read_bytes() != (folder / (key + '.json')).read_bytes():
                 raise ValueError('Accepted source receipt changed')
         if plan.get('pair_contract_path'):
@@ -231,7 +239,7 @@ def resolve_inputs(plan):
     paired = pair_contract(plan, data, recipe)
     if plan.get('pair_contract_path'):
         verify_shared_pair(plan['pair_contract_path'], paired)
-    for key in ('sft_receipt', 'data_receipt'):
+    for key in (('data_receipt',) if is_native(plan) else ('sft_receipt', 'data_receipt')):
         shutil.copy2(plan[key], folder / (key + '.json'))
     manifests = {}
     for index, (name, source) in enumerate(sorted(data['manifests'].items())):
@@ -252,10 +260,10 @@ def resolve_inputs(plan):
         manifests=manifests, train_manifests=manifests, eval_manifest=str(evaluation),
         eval_manifests=evaluations, data_root=data.get('data_root'),
         data_receipt=str(prepared_receipt), training=recipe.get('training', {}),
-        sft_receipt=str(folder / 'sft_receipt.json'),
         jobs=[dict(job, four_d_rl_fraction=ARMS[job['name']][0],
                    spatial_fraction=ARMS[job['name']][1]) for job in plan['jobs']],
         checkpoint_identity=checkpoint_identity(plan['model_checkpoint']))
+    if not is_native(plan): runtime['sft_receipt']=str(folder/'sft_receipt.json')
     write(target, runtime)
     write(root / 'state/pair-contract.json', paired)
     return runtime
@@ -268,7 +276,8 @@ def validate_mode_receipt(receipt, runtime, arm, mode):
     if Path(receipt.get('initial_checkpoint', '')).resolve() != Path(runtime['model_checkpoint']).resolve():
         raise ValueError('Arms must use the same declared SFT checkpoint')
     if mode in ('gate', 'train'):
-        required = ['finite_loss', 'nonzero_update', 'reload_verified', 'geometry_preserved']
+        required = ['finite_loss', 'nonzero_update', 'reload_verified',
+                    'native_control_verified' if is_native(runtime) else 'geometry_preserved']
         if mode == 'gate':
             required += ['reference_initial_parity', 'all_group_responses_verified']
             variation = receipt.get('within_group_reward_variation')
@@ -323,9 +332,9 @@ class Queue:
                     raise ValueError('Declared SFT producer failed without a verified formal checkpoint')
             if not all(dependency_ready(dep) for dep in self.plan['dependencies']):
                 self.status('waiting_for_all_prior_gpu_work')
-            elif not Path(self.plan['sft_receipt']).exists():
+            elif not is_native(self.plan) and not Path(self.plan['sft_receipt']).exists():
                 self.status('waiting_for_formal_sft_checkpoint')
-            elif read(self.plan['sft_receipt']).get('status') == 'complete' and read(self.plan['sft_receipt']).get('reload_verified') is not True:
+            elif not is_native(self.plan) and read(self.plan['sft_receipt']).get('status') == 'complete' and read(self.plan['sft_receipt']).get('reload_verified') is not True:
                 self.status('waiting_for_sft_reload_acceptance')
             elif not Path(self.plan['data_receipt']).exists():
                 self.status('waiting_for_data')
@@ -355,7 +364,19 @@ class Queue:
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             write(process_path, dict(status='running', pid=child.pid, command=command, started=time.time()))
             try:
-                code = child.wait(timeout=self.plan.get(mode + '_timeout_seconds', 30 * 86400))
+                deadline=time.monotonic()+self.plan.get(mode + '_timeout_seconds', 30 * 86400)
+                offset=log.tell()
+                while child.poll() is None:
+                    if time.monotonic()>deadline: raise TimeoutError(mode+' exceeded runtime limit')
+                    # A failed rank can leave its peers busy-waiting in NCCL.
+                    # Watch only newly appended text, never historical failures.
+                    with (self.root / 'logs' / f'{arm}-{mode}.log').open('rb') as monitor:
+                        monitor.seek(offset);chunk=monitor.read();offset=monitor.tell()
+                    if mode=='train' and any(marker in chunk for marker in
+                            (b'CUDA out of memory',b'torch.OutOfMemoryError',b'watchdog got stuck')):
+                        raise RuntimeError('Fatal GPU error detected; stopping this process group')
+                    time.sleep(5)
+                code=child.returncode
             except BaseException:
                 os.killpg(child.pid, signal.SIGTERM)
                 try: child.wait(timeout=30)

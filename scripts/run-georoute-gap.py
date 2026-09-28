@@ -40,13 +40,14 @@ class Queue:
     def __init__(self,plan):
         self.plan=plan;self.root=Path(plan['root']);self.child=None
         self.pause=self.root/'pause-request.json';self.priority_finished=False
+        self.blocked_work=None
         self.env=dict(os.environ,CUDA_VISIBLE_DEVICES=','.join(map(str,plan['gpus'])),
                       OMP_NUM_THREADS='4',TOKENIZERS_PARALLELISM='false',
                       PYTHONPATH=plan['code'])
 
     def state(self,status,**extra):
         write(self.root/'state.json',dict(status=status,pid=os.getpid(),updated=time.time(),
-            gpu_work_finished=False,**extra))
+            gpu_work_finished=False,blocked_work=self.blocked_work,**extra))
 
     def idle(self):
         p=subprocess.run(['nvidia-smi','--query-gpu=index,memory.used','--format=csv,noheader,nounits'],
@@ -105,6 +106,15 @@ class Queue:
             self.pause.rename(self.root/('pause-consumed-'+str(time.time_ns())+'.json'))
 
     def route(self):
+        if self.plan.get('tip_support_command') and not ready(self.plan['tip_support_completion']):
+            command=self.plan['tip_support_command']+['--yield-request',str(self.pause)]
+            rc=self.run('tip_support_preparation',command,preempt=True)
+            if rc:raise RuntimeError('TIP support preparation failed')
+            if self.pause.exists():
+                self.priority()
+                if self.run('tip_support_preparation_resumed',command):raise RuntimeError('TIP support preparation resume failed')
+            if self.run('tip_support_merge',self.plan['tip_support_merge_command']):raise RuntimeError('TIP support merge failed')
+            if not ready(self.plan['tip_support_completion']):raise RuntimeError('TIP support acceptance missing')
         for stage in self.plan['route_stages']:
             if ready(stage['completion']):continue
             if not self.priority_finished and ready(self.plan['priority_requirements']):self.priority()
@@ -140,6 +150,10 @@ class Queue:
                         gate_rc=self.run('georoute_runtime_gate',gate_command,preempt=True)
                     else:gate_rc=0
                     if gate_rc:
+                        self.blocked_work=dict(stage='georoute_runtime_gate',exit_code=gate_rc,
+                            failed_at=time.time(),log=str(self.root/'logs/georoute_runtime_gate.log'),
+                            action='requires_repair; waiting_priority_inputs_is_not_healthy_training')
+                        write(self.root/'gate-failure.json',self.blocked_work)
                         self.state('route_gate_failed_waiting_priority')
                         break
                     if not ready(self.plan['runtime_acceptance']):raise RuntimeError('Runtime gate missing actual acceptance')

@@ -49,7 +49,8 @@ def validate(plan):
             if not isinstance(command,list) or not command or not all(isinstance(v,str) for v in command):
                 raise ValueError('Commands must be explicit argv, never shell strings')
         if not stage.get('receipt'): raise ValueError('Each stage needs an acceptance receipt')
-        if stage.get('receipt_equals') not in (None, {'status':'ready','full_model_verified':True}):
+        support_receipt=stage['name'].endswith('-tip-support') and stage.get('receipt_equals')=={'status':'complete'}
+        if not support_receipt and stage.get('receipt_equals') not in (None, {'status':'ready','full_model_verified':True}):
             raise ValueError('Only an explicit full-model runtime gate may use a ready receipt')
     return plan
 

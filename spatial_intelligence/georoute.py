@@ -12,6 +12,21 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers import Qwen3VLForConditionalGeneration
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionRotaryEmbedding
+
+
+class FP32VisionRotaryEmbedding(Qwen3VLVisionRotaryEmbedding):
+    """Restore canonical native frequencies after ZeRO/HF submodule casting.
+
+    Protecting the root model's _apply alone misses buffer initialization/casts
+    during ZeRO-aware from_pretrained. This buffer is nonpersistent: both live
+    training and reload must reconstruct the same original float32 frequencies.
+    """
+    def forward(self,seqlen):
+        if self.inv_freq.dtype != torch.float32:
+            value=1.0/(self.theta**(torch.arange(0,self.dim,2,device='cpu',dtype=torch.float32)/self.dim))
+            self.inv_freq=value.to(self.inv_freq.device)
+        return super().forward(seqlen)
 
 
 @dataclass(frozen=True)
@@ -148,6 +163,14 @@ def make_tip_intervention(graph,mask_fraction=.15,generator=None):
         neighbors=set(graph.src[edges].tolist());chosen={};updates={}
         # Never hide every valid source of this destination.
         if all(mask[s] or s==destination for s in neighbors): continue
+        # A candidate can also be the last visible source of an earlier target.
+        # Reject that candidate before committing it; do not invalidate a mask
+        # that was already accepted and fail only after building the whole set.
+        affected=graph.dst[(graph.src==destination)&mask[graph.dst]].unique()
+        if any((mask[graph.src[graph.dst==int(target)]] |
+                (graph.src[graph.dst==int(target)]==destination)).all()
+               for target in affected):
+            continue
         for edge in edges.tolist():
             source=int(graph.src[edge]);frame=int(graph.frame_ids[source])
             options=((graph.frame_ids==frame)&(graph.sample_ids==graph.sample_ids[source])&~mask).nonzero().flatten().tolist()
@@ -169,17 +192,35 @@ def make_tip_intervention(graph,mask_fraction=.15,generator=None):
     return mask,substituted
 
 
+def aggregate_transport(z,graph,reduction='legacy_atomic'):
+    """Versioned equivalent weighted sum; new runs avoid BF16 atomic rounding."""
+    messages=z[graph.src]*graph.weight.to(z.dtype)[:,None]
+    output=torch.zeros_like(z)
+    if reduction=='legacy_atomic':
+        return output.index_add_(0,graph.dst,messages)
+    if reduction!='segment_fp32_v1': raise ValueError('Unknown transport reduction')
+    if graph.dst.numel()==0: return output+z*0
+    order=torch.argsort(graph.dst,stable=True)
+    destinations,lengths=torch.unique_consecutive(graph.dst[order],return_counts=True)
+    values=messages[order]
+    if values.dtype in (torch.bfloat16,torch.float16):values=values.float()
+    summed=torch.segment_reduce(values,'sum',lengths=lengths).to(z.dtype)
+    # Unique destinations: no concurrent updates to an output element.
+    return output.index_copy(0,destinations,summed)
+
+
 class SparseTransportBlock(nn.Module):
-    def __init__(self,width,bottleneck=256,alpha_init=0.):
+    def __init__(self,width,bottleneck=256,alpha_init=0.,transport_reduction='legacy_atomic'):
         super().__init__()
         self.norm=nn.RMSNorm(width,eps=1e-6);self.down=nn.Linear(width,bottleneck,bias=False)
         self.up=nn.Linear(bottleneck,width,bias=False);self.alpha=nn.Parameter(torch.tensor(float(alpha_init)))
+        if transport_reduction not in ('legacy_atomic','segment_fp32_v1'):raise ValueError('Unknown transport reduction')
+        self.transport_reduction=transport_reduction
 
     def forward(self,hidden,graph,*,strength=1.,telemetry=None):
         if hidden.ndim!=2 or len(hidden)!=graph.num_nodes: raise ValueError('Transport graph/layout mismatch')
         _validate_routing_diagnostics(strength,telemetry)
-        z=self.down(self.norm(hidden));m=torch.zeros_like(z)
-        m.index_add_(0,graph.dst,z[graph.src]*graph.weight.to(z.dtype)[:,None])
+        z=self.down(self.norm(hidden));m=aggregate_transport(z,graph,self.transport_reduction)
         connected=torch.zeros(graph.num_nodes,dtype=torch.bool,device=hidden.device)
         connected[graph.dst]=True
         update=self.alpha*self.up(F.silu(m))
@@ -224,7 +265,7 @@ class GeoRoute(nn.Module):
         self.active_exits=list(config.get('active_exits',[0,1,2,3]))
         depth=config.get('blocks_per_exit',2)
         if depth not in (1,2) or not self.active_exits or any(i not in range(4) for i in self.active_exits): raise ValueError('Invalid exit/depth ablation')
-        self.routes=nn.ModuleList([nn.ModuleList([SparseTransportBlock(width,config.get('bottleneck',256),config.get('alpha_init',0.)) for _ in range(depth)]) if i in self.active_exits else nn.ModuleList() for i in range(4)])
+        self.routes=nn.ModuleList([nn.ModuleList([SparseTransportBlock(width,config.get('bottleneck',256),config.get('alpha_init',0.),config.get('transport_reduction','legacy_atomic')) for _ in range(depth)]) if i in self.active_exits else nn.ModuleList() for i in range(4)])
         self._graph=None;self._post_graph=None;self._capture=None;self._handles=[]
         self._diagnostic_strength=1.;self._diagnostic_telemetry=None
 
@@ -309,6 +350,9 @@ class GeoRoute(nn.Module):
 def install_georoute(model,config=None):
     if hasattr(model,'georoute'): raise ValueError('GeoRoute already installed')
     config=dict(config or {});visual=model.model.visual
+    original_rotary=visual.rotary_pos_emb
+    if not isinstance(original_rotary,FP32VisionRotaryEmbedding):
+        visual.rotary_pos_emb=FP32VisionRotaryEmbedding(original_rotary.dim,original_rotary.theta).to(original_rotary.inv_freq.device)
     exits=list(config.get('exits',[5,11,17,23]))
     expected=list(visual.config.deepstack_visual_indexes)+[len(visual.blocks)-1]
     if len(exits)!=4 or exits!=expected or len(visual.deepstack_merger_list)!=3:

@@ -20,3 +20,13 @@ def test_tip_excludes_single_image_not_fabricating_graph_edges():
     rows=[{'id':'a','media':['a']},{'id':'b','media':['a','b']}]
     arranged,count=stage.schedule(rows,'tip')
     assert {r['id'] for r in arranged}=={'b'} and count['tail_padding']==63
+
+
+def test_support_filter_only_changes_tip_not_instruction_coverage():
+    rows=[{'id':str(i),'media':['a','b']} for i in range(1001)]
+    allowed={'1','9'}
+    arranged,count=stage.schedule(rows,'sft',tip_ids=allowed)
+    assert {r['id'] for r in arranged if r['_task']=='sft'}=={r['id'] for r in rows}
+    assert {r['id'] for r in arranged if r['_task']=='tip'}==allowed
+    tip,_=stage.schedule(rows,'tip',tip_ids=allowed)
+    assert {r['id'] for r in tip}==allowed

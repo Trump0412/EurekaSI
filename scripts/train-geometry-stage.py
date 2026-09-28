@@ -60,6 +60,8 @@ def arguments():
     p.add_argument('--resume-checkpoint',type=Path,help='Explicit full Trainer checkpoint from a compatible immutable run')
     p.add_argument('--alignment-checkpoint-threshold',type=int,default=0,help='Opt-in no language recompute for short alignment inputs; requires separate runtime profiling')
     p.add_argument('--evaluate', action='store_true')
+    p.add_argument('--geometry-mode', choices=['normal', 'zero'], default='normal',
+                   help='Evaluation-only: zero projected geometry, preserving slots and RGB input')
     p.add_argument('--benchmark', choices=['revsi', 'vsibench'])
     p.add_argument('--smoke-per-type', type=int, default=0); p.add_argument('--merge', action='store_true')
     return p.parse_args()
@@ -159,10 +161,20 @@ def evaluation(a):
     transformers.AutoProcessor.from_pretrained = classmethod(lambda cls, path, *x, **kw: original_processor(a.processor, *x, **kw))
     spec = importlib.util.spec_from_file_location('matrix_eval', REPO/'scripts/evaluate-spatial.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    mode = getattr(a, 'geometry_mode', 'normal')
+    original_dump = module.dump
+    def diagnostic_dump(path, value):
+        if Path(path).name.startswith('contract.rank') and mode != 'normal':
+            value = dict(value, geometry_intervention='zero_projected_tokens_preserve_slots')
+        return original_dump(path, value)
+    module.dump = diagnostic_dump
     original_input = module.native_video_inputs
     def native(processor, row, answer_format):
         result = insert_slots(original_input(processor, row, answer_format), processor, [len(row['media'])], a.adapter)
         result['geometry_images'] = preprocess_geometry(row['media'], a.vggt_source)
+        if mode == 'zero':
+            import torch
+            result['geometry_force_null'] = torch.ones(1, dtype=torch.bool)
         return result
     module.native_video_inputs = native
     sys.argv = ['evaluate-spatial.py', '--root', str(a.root), '--model', a.model, '--name', a.name,
@@ -431,6 +443,8 @@ def train(a):
 
 if __name__ == '__main__':
     a=arguments()
+    if a.geometry_mode != 'normal' and not a.evaluate:
+        raise ValueError('Geometry intervention is evaluation-only')
     if a.parity: parity(a)
     elif a.evaluate: evaluation(a)
     elif a.verify_reload: verify_reload(a)
