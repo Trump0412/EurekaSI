@@ -60,9 +60,10 @@ class RouteCollator:
 
 
 class GraphCache:
-    def __init__(self,root,teacher,identity,config,device):
+    def __init__(self,root,teacher,identity,config,device,*,cache_tracking_positions=False):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
         self.teacher=teacher;self.identity=identity;self.config=dict(config);self.device=device
+        self.cache_tracking_positions=cache_tracking_positions
         # Storage policy is NOT graph semantics: changing a quota must not
         # invalidate existing graph identities or write duplicate graphs.
         self.cache_max_bytes=self.config.pop('cache_max_bytes',512*1024**3)
@@ -91,6 +92,13 @@ class GraphCache:
         return graph
 
     def build(self,row):
+        if self.cache_tracking_positions:
+            from .vggt_tracking_execution import cached_tracking_positions
+            with cached_tracking_positions(self.teacher,self.device):
+                return self._build(row)
+        return self._build(row)
+
+    def _build(self,row):
         import numpy as np
         import torch
         from .georoute import patch_layout,tracks_to_graph,build_graph
