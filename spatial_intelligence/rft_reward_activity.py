@@ -43,8 +43,9 @@ def merge_activity(items):
     return result
 
 
-def activity_gate(activity, config):
+def activity_gate(activity, config, *, allow_saturated_format=False):
     missing = []
+    saturated = []
     if not activity.get('responses'):
         missing.append('no_rollouts')
     for name, key, default in [('format', 'structure_weight', .5), ('words', 'words_weight', .05)]:
@@ -52,6 +53,11 @@ def activity_gate(activity, config):
             if activity.get(name + '_sum', 0) <= 0:
                 missing.append(name + '_never_rewarded')
             elif activity.get(name + '_advantage_groups', 0) == 0:
-                missing.append(name + '_no_group_advantage_effect')
+                if (name == 'format' and allow_saturated_format and
+                        activity.get('format_positive') == activity.get('responses')):
+                    saturated.append('format_already_satisfied_no_advantage_effect')
+                else:
+                    missing.append(name + '_no_group_advantage_effect')
     return dict(accepted=not missing, failures=missing,
+                saturated_terms=saturated,
                 limitation='Necessary activity check, not semantic reasoning quality or efficacy evidence')

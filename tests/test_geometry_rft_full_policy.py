@@ -90,3 +90,32 @@ def test_cpu_optimizer_matches_adam_and_restores_moments():
     a.square().sum().backward();b.square().sum().backward()
     direct.step();restored.step()
     assert torch.equal(a,b)
+
+
+def test_coldstart_overlay_initializes_actor_and_reference_without_rounding(tmp_path, monkeypatch):
+    import json
+    from spatial_intelligence.geometry_rft import load_initial_model
+    import spatial_intelligence.qwen3vl_geometry_matrix as matrix
+    plan=dict(policy_scope=FULL_SCOPE,model_checkpoint=str(tmp_path/'sft'),
+        model_kind='geometry',vggt_source='unused-test-source')
+    policy=configure_full_policy(Base().bfloat16())
+    with torch.no_grad():
+        for parameter in policy.parameters():
+            if parameter.requires_grad: parameter.add_(1e-6)
+    save_policy(policy,tmp_path/'cold',plan)
+    receipt=tmp_path/'receipt.json'
+    receipt.write_text(json.dumps(dict(status='complete',diagnostic_only=False,
+        finite_loss=True,nonzero_update=True,reload_verified=True,
+        checkpoint=str(tmp_path/'cold'),base_checkpoint=plan['model_checkpoint'])))
+    cold_plan=dict(plan,coldstart_policy=str(tmp_path/'cold'),coldstart_receipt=str(receipt))
+    monkeypatch.setattr(matrix,'load_matrix_model',lambda *a,**kw: Base().bfloat16())
+    actor=load_initial_model(cold_plan); reference=load_initial_model(cold_plan)
+    for name,p in policy.named_parameters():
+        if p.requires_grad:
+            a=dict(actor.named_parameters())[name]; r=dict(reference.named_parameters())[name]
+            assert a.dtype==r.dtype==torch.float32
+            assert torch.equal(p,a) and torch.equal(p,r)
+            assert a.data_ptr()!=r.data_ptr()
+    save_policy(actor,tmp_path/'rft',cold_plan)
+    with pytest.raises(ValueError,match='cold-start lineage'):
+        restore_full_policy(Base(),tmp_path/'rft',plan)

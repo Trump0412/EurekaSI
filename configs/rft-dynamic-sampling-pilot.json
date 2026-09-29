@@ -1,0 +1,15 @@
+{
+  "status": "prepared_not_armed_requires_real_multirank_gate",
+  "usage": "Merge training into a NEW plan.training; retain original scientific_config and reward. Never hot-edit an armed plan.",
+  "training": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "min_new_tokens": 0,
+    "dynamic_sampling": {
+      "enabled": true,
+      "max_attempts_per_slot": 64,
+      "reward_range_epsilon": 1e-8
+    }
+  }
+}

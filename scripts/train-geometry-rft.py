@@ -17,6 +17,7 @@ import time
 REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO))
 from spatial_intelligence.rft_reward_activity import group_activity, merge_activity, activity_gate
+from spatial_intelligence.rft_dynamic_sampling import select_group, replacement_row
 
 
 def read(path):
@@ -116,12 +117,19 @@ def run(plan, arm_name, mode):
     from spatial_intelligence.geometry_rft import resolve_rft_prompt
     prompt_version,prompt_instruction=resolve_rft_prompt(recipe,plan)
     cfg={**recipe.get('training',{}),**plan.get('training',{})}
+    dynamic=cfg.get('dynamic_sampling',{})
+    dynamic_enabled=bool(dynamic.get('enabled',False))
     plan=dict(plan,lora_rank=int(cfg.get('lora_rank',64)),lora_alpha=int(cfg.get('lora_alpha',128)))
     scope=cfg.get('policy_scope',plan.get('policy_scope','language_lora_geometry'))
     plan.update(policy_scope=scope,use_lora=cfg.get('use_lora',plan.get('use_lora',scope!=FULL_SCOPE)))
     offload=cfg.get('optimizer_state_offload','none')
     if offload not in ('cpu','none'): raise ValueError('Unsupported optimizer offload implementation')
     checkpoint_name=policy_checkpoint_name(plan)
+    def realized_reward_gate(activity):
+        # Only a validated cold-start run can predeclare already-mastered
+        # formatting. This is NEVER reported as format-reward advantage evidence.
+        return activity_gate(activity, cfg.get('reward', {}), allow_saturated_format=bool(
+            plan.get('coldstart_policy') and plan.get('allow_saturated_format_after_coldstart')))
     group=int(plan.get('group_size',8)); prompt_batch=int(plan['prompts_per_update'])
     if group!=8 or prompt_batch%world: raise ValueError('Keep G=8 and globally matched prompt batch')
     data=read(plan['data_receipt'])
@@ -155,6 +163,7 @@ def run(plan, arm_name, mode):
     target=2 if mode=='gate' else updates
     max_new=int(cfg.get('max_new_tokens',512)); context_limit=int(cfg.get('max_context',16384))
     contract={'arm':arm,'initial_checkpoint':str(Path(plan['model_checkpoint']).resolve()),
+        'coldstart_policy':plan.get('coldstart_policy'),
         'data_receipt':str(Path(plan['data_receipt']).resolve()),'group_size':group,
         'prompts_per_update':prompt_batch,'updates':target,'formal_updates':updates,
         'prompt_budget':target*prompt_batch,'world':world,'seed':seed,'training':cfg,
@@ -162,7 +171,9 @@ def run(plan, arm_name, mode):
         'reference_rows':reference_rows,'engine':'HF synchronous GSPO, not VERL',
         'policy_scope':scope,'optimizer_state_offload':offload,
         'reference_implementation':'separate frozen SFT language/interface' if scope==FULL_SCOPE else 'PEFT disabled adapter',
-        'sampling':'temperature .7 / top_p .9; surrogate uses untempered actor log probabilities',
+        'sampling':{'temperature':float(cfg.get('temperature',.7)), 'top_p':float(cfg.get('top_p',.9)),
+                    'min_new_tokens':int(cfg.get('min_new_tokens',0)),
+                    'surrogate':'untempered actor log probabilities'},
         'sampling_limit':'truncated sampling differs from raw actor distribution; no exact behavior-density claim',
         'mode':mode,'base_checkpoint_identity':sft.get('checkpoint'),
         'model_kind':plan.get('model_kind','geometry'),'initialization':plan.get('initialization','formal_sft')}
@@ -255,7 +266,8 @@ def run(plan, arm_name, mode):
             try:
                 with cached_geometry(policy,candidate_prompt),autocast():
                     trials=sample_group(policy,processor,candidate_prompt,group,micro,max_new,
-                        temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)))
+                        temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)),
+                        min_new_tokens=int(cfg.get('min_new_tokens',0)))
                     generated=sum(len(r['tokens']) for r in trials)
                 del trials
             except torch.OutOfMemoryError as exc:
@@ -280,10 +292,12 @@ def run(plan, arm_name, mode):
     step_times=[]; started=time.monotonic(); reward_activity={}
     last_loss=state.get('last_loss',float('nan')) if checkpoint else 0.
     last_grad=state.get('last_grad',0.) if checkpoint else 0.
+    sampling_totals=dict(state.get('sampling_totals',{})) if checkpoint else {}
     for step in range(start,target):
         began=time.monotonic(); optimizer.zero_grad(set_to_none=True); local_loss=0.; varied=0; generated=0
         timings={'input':0.,'rollout_and_geometry':0.,'old_reference_logprob':0.,'backward':0.,'sync_optimizer':0.}
         source_stats={}; step_reward_activity={}
+        step_sampling={'candidate_groups':0,'discarded_groups':0,'generated_tokens':0}
         probes={}
         # Hybrid-attention backbones need not have a self-attention layer zero.
         language_pattern='.language_model.layers.' if scope==FULL_SCOPE else 'lora_B'
@@ -298,12 +312,46 @@ def run(plan, arm_name, mode):
             for local_index in range(prompt_batch//world):
                 index=step*prompt_batch+local_index*world+rank
                 part=time.monotonic()
-                row=sampled_row(datasets,arm,seed,index); prompt=prepare(row)
+                row=sampled_row(datasets,arm,seed,index)
+                selected=None
+                if dynamic_enabled:
+                    def generate_candidate(candidate):
+                        candidate_prompt=prepare(candidate)
+                        with cached_geometry(policy,candidate_prompt),autocast():
+                            candidate_responses=sample_group(policy,processor,candidate_prompt,group,rollout_micro,max_new,
+                                temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)),
+                                min_new_tokens=int(cfg.get('min_new_tokens',0)))
+                        return candidate_prompt,candidate_responses
+                    def record_candidate(candidate,responses,scores,attempt,accepted):
+                        with (out/f'candidates.rank{rank}.jsonl').open('a',encoding='utf-8') as candidate_stream:
+                            candidate_stream.write(json.dumps({'step':step+1,'prompt_index':index,'attempt':attempt,
+                                'id':candidate['id'],'source':candidate['source'],'accepted_for_update':accepted,
+                                'responses':[{'text':r['text'],'tokens':r['tokens'].tolist(),
+                                    'truncated':r['truncated'],'reward':s} for r,s in zip(responses,scores)]},
+                                ensure_ascii=False)+'\n')
+                    selected,counts=select_group(row,generate_candidate,score,
+                        lambda attempt:replacement_row(datasets,row['source'],seed,index,attempt),record_candidate,
+                        max_attempts=int(dynamic.get('max_attempts_per_slot',64)),
+                        epsilon=float(dynamic.get('reward_range_epsilon',1e-8)))
+                    for key,value in counts.items(): step_sampling[key]+=value
+                    # All ranks rendezvous even on exhaustion: no partial batch,
+                    # optimizer update or permanent deletion of these questions.
+                    readiness=gather(selected is not None)
+                    if not all(readiness):
+                        if rank==0: write(out/'blocked-dynamic-sampling.json',
+                            {'step':step+1,'local_slot':local_index,'rank_ready':readiness,
+                             'reason':'bounded candidate budget exhausted; optimizer not stepped'})
+                        raise RuntimeError('Dynamic sampling could not fill the accepted batch')
+                    row,prompt,responses,scores=selected
+                    del selected
+                else: prompt=prepare(row)
                 torch.cuda.synchronize(); timings['input']+=time.monotonic()-part
                 part=time.monotonic()
                 with cached_geometry(policy,prompt),autocast():
-                    responses=sample_group(policy,processor,prompt,group,rollout_micro,max_new,
-                        temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)))
+                    if not dynamic_enabled:
+                        responses=sample_group(policy,processor,prompt,group,rollout_micro,max_new,
+                            temperature=float(cfg.get('temperature',.7)),top_p=float(cfg.get('top_p',.9)),
+                            min_new_tokens=int(cfg.get('min_new_tokens',0)))
                     torch.cuda.synchronize(); timings['rollout_and_geometry']+=time.monotonic()-part
                     scores=[score(r,row) for r in responses]
                     step_reward_activity=merge_activity([step_reward_activity,
@@ -354,7 +402,11 @@ def run(plan, arm_name, mode):
         torch.cuda.synchronize(); seconds=time.monotonic()-began; step_times.append(seconds)
         reports=gather({'loss':local_loss,'grad_norm':float(grad),'variation':varied,'tokens':generated,
             'seconds':seconds,'peak_reserved_gib':torch.cuda.max_memory_reserved()/2**30,'components':components,
-            'timings':timings,'source_statistics':source_stats,'reward_activity':step_reward_activity})
+            'timings':timings,'source_statistics':source_stats,'reward_activity':step_reward_activity,
+            'dynamic_sampling':step_sampling})
+        for report in reports:
+            for key,value in report['dynamic_sampling'].items():
+                sampling_totals[key]=sampling_totals.get(key,0)+value
         reward_activity=merge_activity([reward_activity]+[x['reward_activity'] for x in reports])
         all_variation+=sum(x['variation'] for x in reports)
         last_loss=sum(x['loss'] for x in reports)/world; last_grad=max(x['grad_norm'] for x in reports)
@@ -366,7 +418,9 @@ def run(plan, arm_name, mode):
                 'rank_timings':[x['timings'] for x in reports],
                 'rank_source_statistics':[x['source_statistics'] for x in reports],
                 'reward_activity_since_start':reward_activity,
-                'reward_activity_gate':activity_gate(reward_activity,cfg.get('reward',{})),
+                'dynamic_sampling_enabled':dynamic_enabled,'sampling_totals':dict(sampling_totals),
+                'candidate_generated_tokens':sum(x['dynamic_sampling']['generated_tokens'] for x in reports),
+                'reward_activity_gate':realized_reward_gate(reward_activity),
                 'remaining_hours':sum(step_times[1:] or step_times)/len(step_times[1:] or step_times)*(target-step-1)/3600,
                 'eta_status':'warming_up' if len(step_times)<3 else 'measured'}
             write(out/'live-eta.json',value)
@@ -376,7 +430,7 @@ def run(plan, arm_name, mode):
         # of steps while configured shaping rewards remain inactive. On resume
         # this observes a fresh 100-update window; it is not a full-history claim.
         if step-start+1==100:
-            reward_gate=activity_gate(reward_activity,cfg.get('reward',{}))
+            reward_gate=realized_reward_gate(reward_activity)
             if not reward_gate['accepted']:
                 if rank==0: write(out/'blocked-reward-activity.json',reward_gate)
                 raise RuntimeError('Configured reward terms inactive: '+','.join(reward_gate['failures']))
@@ -390,7 +444,7 @@ def run(plan, arm_name, mode):
                 save_policy(policy,checkpoint/checkpoint_name,plan); processor.save_pretrained(checkpoint/checkpoint_name)
                 torch.save({'optimizer':optimizer.state_dict(),'scheduler':scheduler.state_dict(),'step':step+1,
                     'within_group_reward_variation':all_variation,'component_updates':components,
-                    'last_loss':last_loss,'last_grad':last_grad},checkpoint/'optimizer.pt')
+                    'last_loss':last_loss,'last_grad':last_grad,'sampling_totals':sampling_totals},checkpoint/'optimizer.pt')
                 write(checkpoint/'base.json',{'model_checkpoint':plan['model_checkpoint'],'contract':contract})
             barrier()
             if rank==0: write(checkpoint/'complete.json',{'step':step+1,'world':world})
@@ -414,13 +468,15 @@ def run(plan, arm_name, mode):
                     'components':components})
     healthy=(all(x['reload_verified'] and x['reference_fixed'] and all(x['components'].values()) for x in reports)
              and all_variation>0 and (last_grad>0 or start==target))
-    reward_gate=activity_gate(reward_activity,cfg.get('reward',{}))
+    reward_gate=realized_reward_gate(reward_activity)
     if mode=='gate': healthy=healthy and reward_gate['accepted']
     receipt={'status':'complete' if healthy else 'failed','checkpoint':str(checkpoint/checkpoint_name),
         'reward_activity_since_start':reward_activity,'reward_activity_gate':reward_gate,
         'policy_scope':scope,'optimizer_state_offload':offload,
         'arm':arm_name,'mode':mode,
         'initial_checkpoint':plan['model_checkpoint'],'updates':target,'prompt_budget':target*prompt_batch,
+        'coldstart_policy':plan.get('coldstart_policy'),
+        'dynamic_sampling_enabled':dynamic_enabled,'sampling_totals':sampling_totals,
         'group_size':8,'finite_loss':math.isfinite(last_loss),'nonzero_update':all(components.values()),
         'component_updates':components,'within_group_reward_variation':all_variation>0,
         'groups_with_reward_variation':all_variation,'all_group_responses_verified':True,
@@ -445,11 +501,14 @@ def evaluate_pair(plan, arm, out, policy, processor, prepare, score, autocast, g
     data=read(plan['data_receipt']); manifests=plan.get('eval_manifests',data['eval_manifests'])
     if not manifests: raise ValueError('No declared evaluation datasets')
     results={}
-    baseline='released_native' if plan.get('initialization')=='released_native' else 'sft'
-    for variant in (baseline,'rft'):
-        if variant=='rft':
+    baseline=('coldstart_sft' if plan.get('coldstart_policy') else
+        'released_native' if plan.get('initialization')=='released_native' else 'sft')
+    variants=('sft_before_coldstart',baseline,'rft') if plan.get('coldstart_policy') else (baseline,'rft')
+    for variant in variants:
+        if variant=='rft' or plan.get('coldstart_policy'):
             policy.cpu(); del policy; torch.cuda.empty_cache()
-            policy=load_policy(plan,trained['checkpoint'],trainable=False).cuda()
+            variant_plan=dict(plan,coldstart_policy=None) if variant=='sft_before_coldstart' else plan
+            policy=load_policy(variant_plan,trained['checkpoint'] if variant=='rft' else None,trainable=False).cuda()
         policy.eval()
         for benchmark,manifest in manifests.items():
             selected=rows(manifest); output=out/f'{variant}-{benchmark}.rank{rank}.jsonl'

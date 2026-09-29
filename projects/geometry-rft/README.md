@@ -9,6 +9,17 @@
 [奖励审计](../../docs/GAP4D_REWARD_ACTIVITY_REPAIR.md) 与
 [权重及证据备份指南](../../docs/WEIGHT_BACKUP_AND_RESTORE.md)。
 
+2026-09-29 源码补充：新增[结构化冷启动流程](../../docs/RFT_COLDSTART_RUNBOOK.md)
+与[可选动态采样 pilot](../../docs/RFT_DYNAMIC_SAMPLING.md)。包含数据筛选、
+教师输入白名单、人工复核门、冷启动权重血缘及 actor/reference 初始化。
+这些是待实际 GPU 验收的实验入口，不是已完成的奖励修复结果；发布代码不启动队列。
+冷启动样本量必须在独立 plan 中显式设置，不能把文档示例当作已批准的实验规模。
+
+本次发布检查：静态解析/文档链接与release检查通过；独立Linux源码快照、
+屏蔽GPU的9个相关测试文件共74 passed（旧PEFT兼容用例6条警告）。覆盖冷启动
+筛选与权重血缘、动态采样、奖励活性、队列、worker和保存恢复；不代表真实教师
+标注质量、多卡冷启动或正式RFT验收。私有计划、权重、审稿材料不随源码发布。
+
 ## 研究对象
 
 Qwen3-VL-2B + VGGT，下采样空间接口。共同 SFT 初始化使用

@@ -80,6 +80,8 @@ def dependency_ready(dep):
 
 
 def validate_sft(plan):
+    from spatial_intelligence.rft_coldstart import validate_coldstart_initialization
+    validate_coldstart_initialization(plan)
     if is_native(plan): return validate_native_initialization(plan)
     value = read(plan['sft_receipt'])
     for field in ('finite_loss', 'nonzero_update', 'reload_verified'):
@@ -156,11 +158,13 @@ def evaluation_sources(data):
 
 
 def pair_contract(plan, data, recipe):
+    from spatial_intelligence.rft_coldstart import validate_coldstart_initialization
     train_ids = {name: manifest_ids(path) for name, path in sorted(data['manifests'].items())}
     if sum(len(values) for values in train_ids.values()) != data['accepted_train_rows']:
         raise ValueError('Accepted row count differs from the actual source manifests')
     evaluation = {name: manifest_ids(path) for name, path in sorted(evaluation_sources(data).items())}
     return dict(pair_id=plan['pair_id'], model_checkpoint=str(Path(plan['model_checkpoint']).resolve()),
+        coldstart_identity=validate_coldstart_initialization(plan),
         checkpoint_identity=checkpoint_identity(plan['model_checkpoint']), scientific_recipe=recipe,
         source_data_receipt=data, source_train_ids=train_ids, evaluation_ids=evaluation,
         primary_evaluation_ids=manifest_ids(data['eval_manifest']),
@@ -222,6 +226,10 @@ def resolve_inputs(plan):
     target = root / 'runtime-plan.json'
     if target.exists():
         runtime = read(target)
+        if plan.get('coldstart_policy'):
+            from spatial_intelligence.rft_coldstart import validate_coldstart_initialization
+            if validate_coldstart_initialization(plan) != read(root / 'state/pair-contract.json')['coldstart_identity']:
+                raise ValueError('Cold-start weights changed after acceptance')
         if checkpoint_identity(plan['model_checkpoint']) != runtime['checkpoint_identity']:
             raise ValueError('Source checkpoint changed after acceptance')
         for key in (('data_receipt',) if is_native(plan) else ('sft_receipt', 'data_receipt')):

@@ -52,6 +52,7 @@ def save_policy(policy, path, plan):
     torch.save(state,path/'full_trainable.pt')
     (path/'policy_scope.json').write_text(json.dumps(dict(scope=FULL_SCOPE,
         initial_checkpoint=str(plan['model_checkpoint']),
+        coldstart_policy=plan.get('coldstart_policy'),
         model_kind=plan.get('model_kind','geometry'),
         frozen_modules=['native_rgb'] + (['checkpoint_specific_vggt'] if hasattr(policy_base(policy),'geometry_backbone') else []),
         format_version=1)),encoding='utf-8')
@@ -63,6 +64,8 @@ def restore_full_policy(base, path, plan):
         raise ValueError('Full-policy scope or fixed SFT lineage mismatch')
     if meta.get('model_kind','geometry') != plan.get('model_kind','geometry'):
         raise ValueError('Full-policy model kind mismatch')
+    if meta.get('coldstart_policy') != plan.get('coldstart_policy'):
+        raise ValueError('Full-policy cold-start lineage mismatch')
     policy=configure_full_policy(base)
     saved=torch.load(Path(path)/'full_trainable.pt',map_location='cpu',weights_only=True)
     actual={n:p for n,p in policy.named_parameters() if p.requires_grad}
@@ -111,7 +114,15 @@ def load_initial_model(plan):
             config=config,dtype=torch.bfloat16,attn_implementation='sdpa')
     if kind!='geometry': raise ValueError('Unknown RFT model kind')
     from .qwen3vl_geometry_matrix import load_matrix_model
-    return load_matrix_model(plan['model_checkpoint'],plan['vggt_source'],stage='eval')
+    base = load_matrix_model(plan['model_checkpoint'],plan['vggt_source'],stage='eval')
+    if plan.get('coldstart_policy'):
+        # Restore FP32 learned values before actor/reference construction. Both
+        # branches initialize from the SAME cold-start policy, not the old SFT.
+        from .rft_coldstart import validate_coldstart_initialization
+        validate_coldstart_initialization(plan)
+        base = restore_full_policy(base, plan['coldstart_policy'],
+            dict(plan, coldstart_policy=None))
+    return base
 
 
 def load_reference(plan, policy):
@@ -372,8 +383,9 @@ def repeat_prompt(prompt, count):
 
 
 def sample_group(policy, processor, prompt, group_size=8, micro=1,
-                 max_new_tokens=512, temperature=.7, top_p=.9):
+                 max_new_tokens=512, temperature=.7, top_p=.9, min_new_tokens=0):
     if group_size%micro: raise ValueError('Rollout microbatch must divide logical group')
+    if not 0 <= min_new_tokens < max_new_tokens: raise ValueError('Invalid output length bounds')
     policy.eval()
     eos=policy.generation_config.eos_token_id
     eos={eos} if isinstance(eos,int) else set(eos or [])
@@ -382,7 +394,7 @@ def sample_group(policy, processor, prompt, group_size=8, micro=1,
         for start in range(0,group_size,micro):
             batch=repeat_prompt(prompt,micro)
             generated=policy.generate(**batch,do_sample=True,temperature=temperature,
-                top_p=top_p,top_k=0,max_new_tokens=max_new_tokens,use_cache=True,
+                top_p=top_p,top_k=0,max_new_tokens=max_new_tokens,min_new_tokens=min_new_tokens,use_cache=True,
                 pad_token_id=processor.tokenizer.pad_token_id)
             for sequence in generated:
                 tokens=sequence[prompt['input_ids'].shape[1]:]
